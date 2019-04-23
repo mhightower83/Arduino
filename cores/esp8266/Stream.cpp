@@ -31,7 +31,11 @@ int Stream::timedRead() {
     _startMillis = millis();
     do {
         c = read();
+#if LOCAL_CORE_ASYNC_FIXES
+        if(c >= 0 || _timeout == 0)
+#else
         if(c >= 0)
+#endif
             return c;
         yield();
     } while(millis() - _startMillis < _timeout);
@@ -44,7 +48,11 @@ int Stream::timedPeek() {
     _startMillis = millis();
     do {
         c = peek();
+#if LOCAL_CORE_ASYNC_FIXES
+        if(c >= 0 || _timeout == 0)
+#else
         if(c >= 0)
+#endif
             return c;
         yield();
     } while(millis() - _startMillis < _timeout);
@@ -254,4 +262,3 @@ String Stream::readStringUntil(char terminator) {
     }
     return ret;
 }
-
