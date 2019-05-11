@@ -50,7 +50,7 @@ import json
 #   to replace boards.txt
 #       ./tools/boards.txt.py --boardsgen --boardlist
 #
-boardlist = [ 'generic', 'esp8285', 'huzzah', 'sonoff', 'espurnakmc', 'espurna', 'espurna85' ]
+boardlist = [ 'generic', 'esp8285', 'huzzah', 'sonoff', 'sonoff2', 'espurnakmc', 'espurna', 'espurna85' ]
 #
 # Note, this list is also used with --xboardlist option. For example, the
 # commands below will replace boards.txt with a version that omits the boards
@@ -864,41 +864,72 @@ boards = collections.OrderedDict([
             'More details at https://shop.makestro.com/product/espectrocore/',
         ],
     }),
-    ( 'sonoff', {
-        'name': 'ITEAD Sonoff',
+    ( 'sonoff2', {
+        'name': 'ITEAD Sonoff - Modified',
         'opts': {
-            '.build.board': 'SONOFF_BASIC',
-            '.build.variant': 'sonoff',
+            '.build.board': 'SONOFF_SV',
+            '.build.variant': 'itead',
             '.build.extra_flags': '-DESP8266',
-            # '.build.flash_size': '16M',
+            '.build.flash_size': '16M',
+            '.FlashMode.qio': 'QIO (fast)',
+            '.menu.BoardModel.sonoffSV': 'ITEAD Sonoff SV',
+            '.menu.BoardModel.sonoffSV.build.board': 'SONOFF_SV',
+            # '.menu.BoardModel.sonoffSV.build.variant': 'itead',
+            # '.menu.BoardModel.sonoffSV.build.extra_flags': '-DESP8266',
+            '.menu.BoardModel.sonoffTH': 'ITEAD Sonoff TH',
+            '.menu.BoardModel.sonoffTH.build.board': 'SONOFF_TH',
+            # '.menu.BoardModel.sonoffTH.build.variant': 'itead',
+            # '.menu.BoardModel.sonoffTH.build.extra_flags': '-DESP8266',
             '.menu.BoardModel.sonoffBasicIR': 'ITEAD Sonoff Basic - IRremote',
             '.menu.BoardModel.sonoffBasicIR.build.board': 'SONOFF_BASIC',
-            '.menu.BoardModel.sonoffBasicIR.build.variant': 'sonoff',
-            '.menu.BoardModel.sonoffBasicIR.build.extra_flags': '-DESP8266',
-            # '.menu.BoardModel.sonoffBasicIR.FlashMode.qio': 'QIO (fast)',
+            # '.menu.BoardModel.sonoffBasicIR.build.variant': 'itead',
+            # '.menu.BoardModel.sonoffBasicIR.build.extra_flags': '-DESP8266',
             '.menu.BoardModel.sonoffBasic': 'ITEAD Sonoff Basic',
             '.menu.BoardModel.sonoffBasic.build.board': 'SONOFF_BASIC',
-            '.menu.BoardModel.sonoffBasic.build.variant': 'sonoff',
-            '.menu.BoardModel.sonoffBasic.build.extra_flags': '-DESP8266',
-            '.menu.BoardModel.sonoffSV': 'ITEAD Sonoff SV',
-            '.menu.BoardModel.sonoffSV.build.variant': 'sonoff',
-            '.menu.BoardModel.sonoffSV.build.board': 'SONOFF_SV',
-            '.menu.BoardModel.sonoffSV.build.extra_flags': '-DESP8266',
+            # '.menu.BoardModel.sonoffBasic.build.variant': 'itead',
+            # '.menu.BoardModel.sonoffBasic.build.extra_flags': '-DESP8266',
             '.menu.BoardModel.sonoffS20': 'ITEAD Sonoff S20',
-            '.menu.BoardModel.sonoffS20.build.variant': 'sonoff',
             '.menu.BoardModel.sonoffS20.build.board': 'SONOFF_S20',
-            '.menu.BoardModel.sonoffS20.build.extra_flags': '-DESP8266',
+            # '.menu.BoardModel.sonoffS20.build.variant': 'itead',
+            # '.menu.BoardModel.sonoffS20.build.extra_flags': '-DESP8266',
              },
         'macro': [
             'my_project_flags_menu',
             'resetmethod_menu_extra',
             'resetmethod_menu',
             'flashfreq_menu',
-            'flashmode_menu',
-            '16M', '1M', '2M', '4M', '8M', 
+            # 'flashmode_menu',
+            'flashmode_qio',
+            '16M15',
             'sdk',
             ],
-        'desc': [ 'ESP8266 based devices from ITEAD: Sonoff Basic, Sonoff SV, and Sonoff S20' ],
+        'desc': [ 'Modified ESP8266 based devices from ITEAD: Sonoff SV, Sonoff TH, Sonoff Basic, and Sonoff S20' ],
+    }),
+    ( 'sonoff', {
+        'name': 'ITEAD Sonoff',
+        'opts': {
+            '.build.board': 'SONOFF_SV',
+            '.build.variant': 'itead',
+            '.build.extra_flags': '-DESP8266',
+            '.menu.BoardModel.sonoffSV': 'ITEAD Sonoff SV',
+            '.menu.BoardModel.sonoffSV.build.board': 'SONOFF_SV',
+            '.menu.BoardModel.sonoffTH': 'ITEAD Sonoff TH',
+            '.menu.BoardModel.sonoffTH.build.board': 'SONOFF_TH',
+            '.menu.BoardModel.sonoffBasic': 'ITEAD Sonoff Basic',
+            '.menu.BoardModel.sonoffBasic.build.board': 'SONOFF_BASIC',
+            '.menu.BoardModel.sonoffS20': 'ITEAD Sonoff S20',
+            '.menu.BoardModel.sonoffS20.build.board': 'SONOFF_S20',
+             },
+        'macro': [
+            'my_project_flags_menu',
+            'resetmethod_menu_extra',
+            'resetmethod_menu',
+            'flashmode_dout',
+            'flashfreq_40',
+            '1M',
+            'sdk',
+            ],
+        'desc': [ 'ESP8266 based devices from ITEAD: Sonoff SV, Sonoff TH, Sonoff Basic, and Sonoff S20' ],
     }),
 #### Custom begin
     ( 'espurna', {
@@ -1494,6 +1525,7 @@ def all_flash_map ():
     f4m  = collections.OrderedDict([])
     f8m  = collections.OrderedDict([])
     f16m = collections.OrderedDict([])
+    f16m15 = collections.OrderedDict([])
 
     #                      flash(KB) spiffs(KB)
 
@@ -1527,6 +1559,7 @@ def all_flash_map ():
 
     f16m.update(flash_map( 16*1024, 14*1024 ))
     f16m.update(flash_map( 16*1024, 15*1024 ))
+    f16m15.update(flash_map( 16*1024, 15*1024 ))
 
     if ldgen:
         print("generated: ldscripts (in %s)" % lddir)
@@ -1537,7 +1570,8 @@ def all_flash_map ():
           '2M':  f2m,
           '4M':  f4m,
           '8M':  f8m,
-         '16M': f16m
+         '16M': f16m,
+         '16M15': f16m15
         }
 
 ################################################################
