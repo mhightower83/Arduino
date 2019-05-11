@@ -39,26 +39,6 @@ import getopt
 import re
 import json
 
-# Customize default boardlist here.
-#
-# Use this to reduce board menu list to a list of the boards you have.
-# Update boardlist below and run:
-#
-#   to view the results of your changes:
-#       ./tools/boards.txt.py --boards --boardlist
-#
-#   to replace boards.txt
-#       ./tools/boards.txt.py --boardsgen --boardlist
-#
-boardlist = [ 'generic', 'esp8285', 'huzzah', 'sonoff', 'espurnakmc', 'espurna', 'espurna85' ]
-#
-# Note, this list is also used with --xboardlist option. For example, the
-# commands below will replace boards.txt with a version that omits the boards
-# in boardlist, and replaces boards.local.txt with one that only contains
-# the boards in boardlist.
-#       ./tools/boards.txt.py --boardsgen --xboardlist
-#       ./tools/boards.txt.py --boardslocalgen --boardlist
-
 # serial upload speed order in menu
 # default is 115 for every board unless specified with 'serial' in board
 # or by user command line
@@ -863,173 +843,7 @@ boards = collections.OrderedDict([
             '',
             'More details at https://shop.makestro.com/product/espectrocore/',
         ],
-    }),
-    ( 'sonoff', {
-        'name': 'ITEAD Sonoff',
-        'opts': {
-            '.build.board': 'SONOFF_BASIC',
-            '.build.variant': 'sonoff',
-            '.build.extra_flags': '-DESP8266',
-            # '.build.flash_size': '16M',
-            '.menu.BoardModel.sonoffBasicIR': 'ITEAD Sonoff Basic - IRremote',
-            '.menu.BoardModel.sonoffBasicIR.build.board': 'SONOFF_BASIC',
-            '.menu.BoardModel.sonoffBasicIR.build.variant': 'sonoff',
-            '.menu.BoardModel.sonoffBasicIR.build.extra_flags': '-DESP8266',
-            # '.menu.BoardModel.sonoffBasicIR.FlashMode.qio': 'QIO (fast)',
-            '.menu.BoardModel.sonoffBasic': 'ITEAD Sonoff Basic',
-            '.menu.BoardModel.sonoffBasic.build.board': 'SONOFF_BASIC',
-            '.menu.BoardModel.sonoffBasic.build.variant': 'sonoff',
-            '.menu.BoardModel.sonoffBasic.build.extra_flags': '-DESP8266',
-            '.menu.BoardModel.sonoffSV': 'ITEAD Sonoff SV',
-            '.menu.BoardModel.sonoffSV.build.variant': 'sonoff',
-            '.menu.BoardModel.sonoffSV.build.board': 'SONOFF_SV',
-            '.menu.BoardModel.sonoffSV.build.extra_flags': '-DESP8266',
-            '.menu.BoardModel.sonoffS20': 'ITEAD Sonoff S20',
-            '.menu.BoardModel.sonoffS20.build.variant': 'sonoff',
-            '.menu.BoardModel.sonoffS20.build.board': 'SONOFF_S20',
-            '.menu.BoardModel.sonoffS20.build.extra_flags': '-DESP8266',
-             },
-        'macro': [
-            'my_project_flags_menu',
-            'resetmethod_menu_extra',
-            'resetmethod_menu',
-            'flashfreq_menu',
-            'flashmode_menu',
-            '16M', '1M', '2M', '4M', '8M', 
-            'sdk',
-            ],
-        'desc': [ 'ESP8266 based devices from ITEAD: Sonoff Basic, Sonoff SV, and Sonoff S20' ],
-    }),
-#### Custom begin
-    ( 'espurna', {
-        'name': 'ESPurna for ESP8266 based Modules',
-        'opts': {
-            '.build.board': 'ESP8266_GENERIC',
-            '.menu.FlashMode.dout': 'DOUT',
-            '.menu.BoardModel.kmcSmartPlug': 'KMC WiFi Smart Plug (70011)',
-            '.menu.BoardModel.kmcSmartPlug.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DKMC_70011',
-            '.menu.BoardModel.kmcSmartPlug.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoffBasic': 'ITEAD Sonoff Basic',
-            '.menu.BoardModel.sonoffBasic.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_BASIC',
-            '.menu.BoardModel.sonoffBasic.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoffRF': 'ITEAD Sonoff RF',
-            '.menu.BoardModel.sonoffRF.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_RF',
-            '.menu.BoardModel.sonoffRF.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoffTH': 'ITEAD Sonoff TH',
-            '.menu.BoardModel.sonoffTH.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_TH',
-            '.menu.BoardModel.sonoffTH.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoffSV': 'ITEAD Sonoff SV',
-            '.menu.BoardModel.sonoffSV.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_SV',
-            '.menu.BoardModel.sonoffSV.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoffSlampher': 'ITEAD Slampher',
-            '.menu.BoardModel.sonoffSlampher.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SLAMPHER',
-            '.menu.BoardModel.sonoffSlampher.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoffS20': 'ITEAD S20 Smart Socket',
-            '.menu.BoardModel.sonoffS20.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_S20',
-            '.menu.BoardModel.sonoffS20.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoffPOW': 'ITEAD Sonoff POW',
-            '.menu.BoardModel.sonoffPOW.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_POW',
-            '.menu.BoardModel.sonoffPOW.build.led': '-DLED_BUILTIN=15',
-            '.menu.BoardModel.sonoffDual': 'ITEAD Sonoff Dual',
-            '.menu.BoardModel.sonoffDual.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_DUAL',
-            '.menu.BoardModel.sonoffDual.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoffDualR2': 'ITEAD Sonoff Dual R2',
-            '.menu.BoardModel.sonoffDualR2.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_DUAL_R2',
-            '.menu.BoardModel.sonoffDualR2.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoff1CHInching': 'ITEAD 1CH Inching',
-            '.menu.BoardModel.sonoff1CHInching.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_1CH_INCHING',
-            '.menu.BoardModel.sonoff1CHInching.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.iteadMotor': 'ITEAD Motor',
-            '.menu.BoardModel.iteadMotor.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_MOTOR',
-            '.menu.BoardModel.iteadMotor.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoffBNSZ01': 'ITEAD Sonoff BNSZ01',
-            '.menu.BoardModel.sonoffBNSZ01.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_BNSZ01',
-            '.menu.BoardModel.sonoffBNSZ01.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoffRFBridge': 'ITEAD Sonoff RF Bridge',
-            '.menu.BoardModel.sonoffRFBridge.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_RFBRIDGE',
-            '.menu.BoardModel.sonoffRFBridge.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoffLED': 'ITEAD Sonoff LED',
-            '.menu.BoardModel.sonoffLED.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_LED',
-            '.menu.BoardModel.sonoffLED.build.led': '-DLED_BUILTIN=13',
-            },
-        'macro': [
-            'espurna_options_menu',
-            'my_project_flags_menu',
-            'resetmethod_menu_extra',
-            'resetmethod_menu',
-            'flashfreq_menu',
-            'flashmode_menu',
-            '1M', '2M', '4M', '8M', '16M',
-            'sdk',
-            ],
-        'desc': [ 'Build tweaks for building ESPurna for ESP8266 based devices. Devices from ITEAD and KMC.',
-                  'Use Model list to make selection.',
-                  'See https://github.com/xoseperez/espurna/wiki for details on the ESPurna project.' ],
-    }),
-    ( 'espurnakmc', {
-        'name': 'ESPurna for KMC 70011',
-        'opts': {
-            '.build.board': 'ESP8266_GENERIC',
-            '.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DKMC_70011',
-            '.build.led': '-DLED_BUILTIN=13',
-            },
-        'macro': [
-            'espurna_options_menu',
-            'my_project_flags_menu',
-            'resetmethod_menu_extra',
-            'resetmethod_menu',
-            'flashfreq_40',
-            'flashmode_qio',
-            '1M',
-            'sdk',
-            ],
-        'desc': [ 'Build tweaks for building ESPurna for ESP8266 based device by KMC.',
-                  'See https://github.com/xoseperez/espurna/wiki for details on the ESPurna project.' ],
-    }),
-    # Sonoff 4CH, Sonoff 4CH Pro, Sonoff Touch, Sonoff B1, Sonoff T1, AI-Thinker Wifi Light
-    # These device are believed to be based on esp8285 which only have 1MB of flash
-    # thus build.board=ESP8266_ESP01
-    ( 'espurna85', {
-        'name': 'ESPurna for ESP8285 based Modules',
-        'opts': {
-            '.build.board': 'ESP8266_ESP01',
-            '.build.variant': 'esp8285',
-            '.menu.FlashMode.dout': 'DOUT',
-            '.menu.led.13': '13',
-            # '.menu.led.13.build.led': '-DLED_BUILTIN=13',
-            '.menu.BoardModel.sonoff4CH': 'ITEAD Sonoff 4CH',
-            '.menu.BoardModel.sonoff4CH.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_4CH',
-            '.menu.BoardModel.sonoff4CHPro': 'ITEAD Sonoff 4CH Pro',
-            '.menu.BoardModel.sonoff4CHPro.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_4CH_PRO',
-            '.menu.BoardModel.sonoffTouch': 'ITEAD Sonoff Touch',
-            '.menu.BoardModel.sonoffTouch.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_TOUCH',
-            '.menu.BoardModel.sonoffB1': 'ITEAD Sonoff B1',
-            '.menu.BoardModel.sonoffB1.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_B1',
-            '.menu.BoardModel.sonoffT11CH': 'ITEAD Sonoff T1 1CH',
-            '.menu.BoardModel.sonoffT11CH.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_T1_1CH',
-            '.menu.BoardModel.sonoffT12CH': 'ITEAD Sonoff T1 2CH',
-            '.menu.BoardModel.sonoffT12CH.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_T1_2CH',
-            '.menu.BoardModel.sonoffT13CH': 'ITEAD Sonoff T1 3CH',
-            '.menu.BoardModel.sonoffT13CH.build.extra_flags': '-DESP8266 -DMQTT_MAX_PACKET_SIZE=400 -DESPURNA -DITEAD_SONOFF_T1_3CH',
-            '.menu.BoardModel.AIThinkerWifiLight': 'AI-Thinker Wifi Light',
-            '.menu.BoardModel.AIThinkerWifiLight.build.extra_flags': '-DESP8266 -DAITHINKER_AI_LIGHT',
-            },
-        'macro': [
-            'espurna_options_menu',
-            'my_project_flags_menu',
-            'resetmethod_menu_extra',
-            'resetmethod_menu',
-            'flashfreq_40',
-            'flashmode_dout',
-            '1M',
-            'led',
-            'sdk',
-            ],
-        'desc': [ 'Build tweaks for building ESPurna for ESP8285 based devices w/1MB flash.',
-                  'Use Model list to make selection, ITEAD: Sonoff 4CH, Sonoff 4CH Pro, Sonoff Touch, Sonoff B1, and Sonoff T1, and AI-Thinker: Wifi Light.',
-                  'See https://github.com/xoseperez/espurna/wiki for details on the ESPurna project.' ],
     })
-#### Custom end
     ])
 
 ################################################################
@@ -1270,40 +1084,6 @@ macros = {
         ( '.menu.ssl.basic.build.sslflags', '-DBEARSSL_SSL_BASIC'),
         ]),
 
-#### Custom begin
-    ####################### Some ESPurna build options
-
-    'espurna_options_menu': collections.OrderedDict([
-        ( '.menu.espurna_ha.turnOnHaDomoticz', 'Domoticz' ),
-        ( '.menu.espurna_ha.turnOnHaDomoticz.build.espurna_ha_flags', '-DHOMEASSISTANT_SUPPORT=0 -DTHINGSPEAK_SUPPORT=0 -DDOMOTICZ_SUPPORT=1' ),
-        ( '.menu.espurna_ha.turnOnHaHomeAssistant', 'Home Assistant' ),
-        ( '.menu.espurna_ha.turnOnHaHomeAssistant.build.espurna_ha_flags', '-DHOMEASSISTANT_SUPPORT=1 -DTHINGSPEAK_SUPPORT=0 -DDOMOTICZ_SUPPORT=0' ),
-        ( '.menu.espurna_ha.turnOnHaThinkspeak', 'Thinkspeak' ),
-        ( '.menu.espurna_ha.turnOnHaThinkspeak.build.espurna_ha_flags', '-DHOMEASSISTANT_SUPPORT=0 -DTHINGSPEAK_SUPPORT=1 -DDOMOTICZ_SUPPORT=0' ),
-        ( '.menu.espurna_ha.none', 'none' ),
-        ( '.menu.espurna_flags.none', 'none' ),
-        ( '.menu.espurna_flags.i2cSupport', 'I2C Support' ),
-        ( '.menu.espurna_flags.i2cSupport.build.espurna_flags', '-DI2C_SUPPORT=1' ),
-        ( '.menu.espurna_flags.dallasSupport', 'Dallas Support' ),
-        ( '.menu.espurna_flags.dallasSupport.build.espurna_flags', '-DDALLAS_SUPPORT=1' ),
-        ( '.menu.espurna_flags.dhtSupport', 'DHT Support' ),
-        ( '.menu.espurna_flags.dhtSupport.build.espurna_flags', '-DDHT_SUPPORT=1' ),
-        ( '.menu.espurna_flags.hlw9012Support', 'HLW9012 Support' ),
-        ( '.menu.espurna_flags.hlw9012Support.build.espurna_flags', '-DHLW8012_SUPPORT=1' ),
-        ]),
-
-    ######################## Discovery Methods Menu
-
-    'my_project_flags_menu': collections.OrderedDict([
-        ( '.menu.my_project_flags.none', 'none' ),
-        ( '.menu.my_project_flags.nameresolv1', 'LLMNR Support' ),
-        ( '.menu.my_project_flags.nameresolv1.build.my_project_flags', '-DLLMNR_SUPPORT' ),
-        ( '.menu.my_project_flags.nameresolv2', 'NetBIOS Support' ),
-        ( '.menu.my_project_flags.nameresolv2.build.my_project_flags', '-DNETBIOS_SUPPORT' ),
-        ( '.menu.my_project_flags.nameresolv3', 'LLMNR and NetBIOS Support' ),
-        ( '.menu.my_project_flags.nameresolv3.build.my_project_flags', '-DLLMNR_SUPPORT -DNETBIOS_SUPPORT' ),
-        ])
-#### Custom end
     }
 
 ################################################################
@@ -1579,56 +1359,17 @@ def all_boards ():
 
         checkdir()
 
-        if boardslocalgen:
-            # make backup of boards.local.txt
-            if os.path.isfile("boards.local.txt"):
-                if os.path.isfile("boards.local.txt.bak"):
-                    os.remove("boards.local.txt.bak")
-                os.rename("boards.local.txt", "boards.local.txt.bak")
+        # check if backup already exists
+        if not os.path.isfile("boards.txt.orig"):
+            os.rename("boards.txt", "boards.txt.orig")
 
-            realstdout = sys.stdout
-            sys.stdout = open("boards.local.txt", 'w')
-        else:
-            # check if backup already exists
-            if not os.path.isfile("boards.txt.orig"):
-                os.rename("boards.txt", "boards.txt.orig")
-
-            realstdout = sys.stdout
-            sys.stdout = open("boards.txt", 'w')
+        realstdout = sys.stdout
+        sys.stdout = open("boards.txt", 'w')
 
     macros.update(all_flash_map())
     macros.update(all_debug())
     macros.update(led(led_default, led_max))
     macros.update(sdk())
-
-# Customized some defaults
-    print('# From Customized boards.txt.py')
-    if boardlistopt or excludeboards:
-        out = ""
-        for a in sys.argv:
-            out += " " + a
-        print("# Abbreviated boards.txt created by:" + out)
-        out = ""
-        for a in boardlist:
-            out += " " + "--board=" + a
-        print("# The following boards were included: " + out)
-        print("")
-    if 'huzzah' in boardlist:
-        print('# These setup some defaults I like.')
-        print('huzzah.menu.FlashSize.4M3M=4M (3M SPIFFS)')
-        print('huzzah.menu.UploadSpeed.921600=921600')
-        print('# Update with your USB Serial device. I had to add the .0 and 0x for this to work.')
-        print('# These entries will group up with those in boards.txt')
-        print('huzzah.vid.0=0x10C4')
-        print('huzzah.pid.0=0xEA60')
-        print('')
-    if 'sonoff' in boardlist:
-        print('sonoff.menu.UploadSpeed.230400.linux=230400')
-        print('sonoff.menu.UploadSpeed.256000.windows=256000')
-        print('sonoff.vid.0=0x0403')
-        print('sonoff.pid.0=0x6001')
-        print('')
-# Customized some defaults - end
 
     print('#')
     print('# Do not create pull-requests for this file only, CI will not accept them.')
@@ -1637,14 +1378,6 @@ def all_boards ():
     print('#')
     print('')
     print('menu.BoardModel=Model')
-    print('menu.ESPModule=Module')
-    print('menu.led=Builtin Led')
-# With Arduino IDE 1.8.7 the order of the menu items will be honored from the tools pull down list.
-# I added these three for ESPurna
-    print('menu.my_project_flags=Project Build Flags')
-    print('menu.espurna_ha=HA Platform')
-    print('menu.espurna_flags=ESPurna Build Flags')
-# I added these three for ESPurna - end
     print('menu.baud=Upload Speed')
     print('menu.xtal=CPU Frequency')
     print('menu.CrystalFreq=Crystal Frequency')
@@ -1652,18 +1385,19 @@ def all_boards ():
     print('menu.FlashMode=Flash Mode')
     print('menu.FlashFreq=Flash Frequency')
     print('menu.ResetMethod=Reset Method')
+    print('menu.ESPModule=Module')
     print('menu.dbg=Debug port')
     print('menu.lvl=Debug Level')
     print('menu.ip=lwIP Variant')
     print('menu.vt=VTables')
     print('menu.exception=Exceptions')
+    print('menu.led=Builtin Led')
     print('menu.wipe=Erase Flash')
     print('menu.sdk=Espressif FW')
     print('menu.ssl=SSL Support')
     print('')
 
-#    for id in boards:
-    for id in boardlist:
+    for id in boards:
         print('##############################################################')
         board = boards[id]
         print(id + '.name=' + board['name'])
@@ -1795,26 +1529,22 @@ def usage (name,ret):
     print(" --lwip            - preferred default lwIP version (default %d)" % lwip)
     print(" --led             - preferred default builtin led for generic boards (default %d)" % led_default)
     print(" --board <b>       - board to modify:")
-    print(" --boardlist       - create an abbreviated boards.txt (use with --board b ...)")
-    print(" --xboardlist      - use --board b to build a board exclude list")
-    print("                     (For --boardlist or --xboardlist use only one)")
     print(" --speed <s>       - change default serial speed")
     print(" --customspeed <s> - new serial speed for all boards")
     print(" --nofloat         - disable float support in printf/scanf")
     print("")
     print(" mandatory option (at least one):")
     print("")
-    print(" --boards          - show boards.txt")
-    print(" --boardsgen       - replace boards.txt")
-    print(" --boardslocalgen  - replace boards.local.txt instead of boards.txt")
-    print(" --ld              - show ldscripts")
-    print(" --ldgen           - replace ldscripts")
-    print(" --package         - show package")
-    print(" --packagegen      - replace board:[] in package")
-    print(" --doc             - shows doc/boards.rst")
-    print(" --docgen          - replace doc/boards.rst")
-    print(" --allgen          - generate and replace everything")
-    print("                     (useful for pushing on github)")
+    print(" --boards        - show boards.txt")
+    print(" --boardsgen     - replace boards.txt")
+    print(" --ld            - show ldscripts")
+    print(" --ldgen         - replace ldscripts")
+    print(" --package       - show package")
+    print(" --packagegen    - replace board:[] in package")
+    print(" --doc           - shows doc/boards.rst")
+    print(" --docgen        - replace doc/boards.rst")
+    print(" --allgen        - generate and replace everything")
+    print("                   (useful for pushing on github)")
     print("")
 
     out = ""
@@ -1831,14 +1561,8 @@ def usage (name,ret):
             out += default_speed
         out += 'k) '
     print("available board names:", out)
-    print("")
 
-    if boardcount == 0:
-        out = ""
-        for b in boardlist:
-            out += b + ' '
-        print("default board names for --boardlist or --xboardlist option:", out)
-        print("")
+    print("")
 
     sys.exit(ret)
 
@@ -1855,13 +1579,6 @@ ldgen = False
 ldshow = False
 boardsgen = False
 boardsshow = False
-
-boardlistopt = False
-excludeboardlist = []
-excludeboards = False
-boardcount = 0
-boardslocalgen = False
-
 packageshow = False
 packagegen = False
 docshow = False
@@ -1874,7 +1591,7 @@ lddir = "tools/sdk/ld/"
 try:
     opts, args = getopt.getopt(sys.argv[1:], "h",
         [ "help", "lwip=", "led=", "speed=", "board=", "customspeed=", "nofloat",
-          "noextra4kheap", "allowWPS", "boardlist", "boardslocalgen", "xboardlist", "board+=",
+          "noextra4kheap", "allowWPS",
           "ld", "ldgen", "boards", "boardsgen", "package", "packagegen", "doc", "docgen",
           "allgen"] )
 except getopt.GetoptError as err:
@@ -1905,23 +1622,6 @@ for o, a in opts:
             print("board %s not available" % a)
             usage(sys.argv[0], 1)
         board = a
-        if boardcount == 0:
-            boardlist = []
-        boardcount += 1
-        boardlist += [ a ]
-
-    elif o in ("--board+"):
-        if not a in boards:
-            print "board %s not available" % a
-            usage(sys.argv[0], 1)
-        boardcount += 1
-        boardlist += [ a ]
-
-    elif o in ("--boardlist"):
-        boardlistopt = True
-
-    elif o in ("--xboardlist"):
-        excludeboards = True
 
     elif o in ("--speed"):
         if board == no:
@@ -1952,11 +1652,6 @@ for o, a in opts:
         boardsshow = True
         boardsgen = True
 
-    elif o in ("--boardslocalgen"):
-        boardsshow = True
-        boardsgen = True
-        boardslocalgen = True
-
     elif o in ("--package"):
         packageshow = True
 
@@ -1984,10 +1679,6 @@ for o, a in opts:
     else:
         assert False, "unhandled option"
 
-    if boardlistopt and excludeboards:
-        print "Specify either --boardlist or --xboardlist, not both."
-        usage(sys.argv[0], 0)
-
 #### ^^^^ cmdline parsing ends
 
 did = False
@@ -1999,13 +1690,6 @@ if ldshow:
 if boardsshow:
     ldshow = False
     ldgen = False
-    if not boardlistopt:
-        if excludeboards:
-            excludeboardlist = boardlist
-        boardlist = []
-        for b in boards:
-            if b not in excludeboardlist:
-                boardlist += [ b ]
     all_boards()
     did = True
 
