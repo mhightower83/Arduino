@@ -498,6 +498,8 @@
 #include "umm_malloc.h"
 
 #include "umm_malloc_cfg.h"   /* user-dependent */
+static uint32_t _savedPS = 0;
+static uint32_t _locked = 0;
 
 extern "C" {
 
@@ -521,6 +523,24 @@ extern int umm_last_fail_alloc_size;
 
 // Macro to place constant strings into PROGMEM and print them properly
 #define printf(fmt, ...)  do { static const char fstr[] PROGMEM = fmt; char rstr[sizeof(fmt)]; for (size_t i=0; i<sizeof(rstr); i++) rstr[i] = fstr[i]; printf(rstr, ##__VA_ARGS__); } while (0)
+
+#if 1
+// The above macro resulted in a crash when calling umm_info(..., true);
+// replace with this, borrowed from core_postmortem.cpp.
+static void ets_printf_P(const char *str, ...) {
+    char destStr[160];
+    char *c = destStr;
+    va_list argPtr;
+    va_start(argPtr, str);
+    vsnprintf(destStr, sizeof(destStr), str, argPtr);
+    va_end(argPtr);
+    while (*c) {
+        ets_putc(*(c++));
+    }
+}
+#undef printf
+#define printf(fmt, ...)  do { ets_printf_P( PSTR(fmt), ##__VA_ARGS__); } while (0)
+#endif
 
 /* -- dbglog {{{ */
 
@@ -954,6 +974,33 @@ static void *get_unpoisoned( void *vptr ) {
 #define GET_UNPOISONED(ptr)       get_unpoisoned(ptr)
 
 #else
+#if 1 //def SAFE_MODE
+/*
+ * Integrity check is disabled, but keep buffer zone around allocated memory.
+ */
+#define POISON_SIZE(s)            (sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE +  UMM_POISON_SIZE_AFTER)
+#define CHECK_POISON_ALL_BLOCKS() 1
+
+static void *get_poisoned( void *vptr, size_t size_w_poison ) {
+  unsigned char *ptr = (unsigned char *)vptr;
+  if (size_w_poison != 0 && ptr != NULL) {
+    ptr += sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE;
+  }
+
+  return ptr;
+}
+
+static void *get_unpoisoned( void *vptr ) {
+  unsigned char *ptr = (unsigned char *)vptr;
+  if (ptr != NULL) {
+    ptr -= sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE;
+  }
+
+  return ptr;
+}
+#define GET_POISONED(ptr, size)   get_poisoned(ptr, size)
+#define GET_UNPOISONED(ptr)       get_unpoisoned(ptr)
+#else
 /*
  * Integrity check is disabled, so just define stub macros
  */
@@ -961,6 +1008,7 @@ static void *get_unpoisoned( void *vptr ) {
 #define CHECK_POISON_ALL_BLOCKS() 1
 #define GET_POISONED(ptr, size)   (ptr)
 #define GET_UNPOISONED(ptr)       (ptr)
+#endif
 #endif
 /* }}} */
 
@@ -1363,7 +1411,6 @@ static void *_umm_malloc( size_t size ) {
   if (umm_heap == NULL) {
     umm_init();
   }
-
   /*
    * the very first thing we do is figure out if we're being asked to allocate
    * a size of 0 - and if we are we'll simply return a null pointer. if not

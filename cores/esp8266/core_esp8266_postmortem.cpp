@@ -32,19 +32,38 @@
 #include "pgmspace.h"
 #include "gdb_hooks.h"
 #include "StackThunk.h"
+#ifndef xt_rsr_ps
+#define xt_rsr_ps()  (__extension__({uint32_t state; __asm__ __volatile__("rsr.ps %0;" : "=a" (state)); state;}))
+#endif
 
 extern "C" {
 
 extern void __real_system_restart_local();
 
 // These will be pointers to PROGMEM const strings
-static const char* s_panic_file = 0;
-static int s_panic_line = 0;
-static const char* s_panic_func = 0;
-static const char* s_panic_what = 0;
+#define PS_INVALID_VALUE (0x80000000U)
+static struct _PANIC {
+    const char* file;
+    const char* func;
+    const char* what;
+    const char* unhandled_exception;
+    // uint32_t sp_dump;
+    uint32_t ps_reg;
+    int line;
+    bool abort_called;
+} s_panic = {NULL, NULL, NULL, NULL, PS_INVALID_VALUE, 0, false};
 
-static bool s_abort_called = false;
-static const char* s_unhandled_exception = NULL;
+// static const char* s_panic_file = 0;
+// static int s_panic_line = 0;
+// static const char* s_panic_func = 0;
+// static const char* s_panic_what = 0;
+//
+// static bool s_abort_called = false;
+// static const char* s_unhandled_exception = NULL;
+//
+// static uint32_t s_sp_dump = 0;
+// #define PS_INVALID_VALUE (0x80000000U)
+// static uint32_t s_ps_reg = PS_INVALID_VALUE;
 
 void abort() __attribute__((noreturn));
 static void uart_write_char_d(char c);
@@ -82,70 +101,37 @@ static void ets_printf_P(const char *str, ...) {
     }
 }
 
-void __wrap_system_restart_local() {
-    register uint32_t sp asm("a1");
-    uint32_t sp_dump = sp;
-
-    if (gdb_present()) {
-        /* When GDBStub is present, exceptions are handled by GDBStub,
-           but Soft WDT will still call this function.
-           Trigger an exception to break into GDB.
-           TODO: check why gdb_do_break() or asm("break.n 0") do not
-           break into GDB here. */
-        raise_exception();
-    }
-
-    struct rst_info rst_info;
-    memset(&rst_info, 0, sizeof(rst_info));
-    system_rtc_mem_read(0, &rst_info, sizeof(rst_info));
-    if (rst_info.reason != REASON_SOFT_WDT_RST &&
-        rst_info.reason != REASON_EXCEPTION_RST &&
-        rst_info.reason != REASON_WDT_RST)
-    {
-        return;
-    }
+static void crashReport(struct rst_info *rst_info, uint32_t sp_dump, uint32_t offset) {
 
     // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
     ets_install_putc1((void *)&uart_write_char_d);
 
-    if (s_panic_line) {
-        ets_printf_P(PSTR("\nPanic %S:%d %S"), s_panic_file, s_panic_line, s_panic_func);
-        if (s_panic_what) {
-            ets_printf_P(PSTR(": Assertion '%S' failed."), s_panic_what);
+    if (PS_INVALID_VALUE != s_panic.ps_reg)
+        ets_printf_P(PSTR("\nPS Register=0x%08X, Interrupts %S\n"), s_panic.ps_reg, (s_panic.ps_reg & 0x0FU)?PSTR("disabled"):PSTR("enabled"));
+    if (s_panic.line) {
+        ets_printf_P(PSTR("\nPanic %S:%d %S"), s_panic.file, s_panic.line, s_panic.func);
+        if (s_panic.what) {
+            ets_printf_P(PSTR(": Assertion '%S' failed."), s_panic.what);
         }
         ets_putc('\n');
     }
-    else if (s_unhandled_exception) {
-        ets_printf_P(PSTR("\nUnhandled C++ exception: %S\n"), s_unhandled_exception);
+    else if (s_panic.unhandled_exception) {
+        ets_printf_P(PSTR("\nUnhandled C++ exception: %S\n"), s_panic.unhandled_exception);
     }
-    else if (s_abort_called) {
+    else if (s_panic.abort_called) {
         ets_printf_P(PSTR("\nAbort called\n"));
     }
-    else if (rst_info.reason == REASON_EXCEPTION_RST) {
-        ets_printf_P(PSTR("\nException (%d):\nepc1=0x%08x epc2=0x%08x epc3=0x%08x excvaddr=0x%08x depc=0x%08x\n"),
-            rst_info.exccause, rst_info.epc1, rst_info.epc2, rst_info.epc3, rst_info.excvaddr, rst_info.depc);
+    else if (rst_info->reason == REASON_EXCEPTION_RST) {
+            ets_printf_P(PSTR("\nException (%d):\nepc1=0x%08x epc2=0x%08x epc3=0x%08x excvaddr=0x%08x depc=0x%08x\n"),
+                rst_info->exccause, rst_info->epc1, rst_info->epc2, rst_info->epc3, rst_info->excvaddr, rst_info->depc);
     }
-    else if (rst_info.reason == REASON_SOFT_WDT_RST) {
+    else if (rst_info->reason == REASON_SOFT_WDT_RST) {
         ets_printf_P(PSTR("\nSoft WDT reset\n"));
     }
 
     uint32_t cont_stack_start = (uint32_t) &(g_pcont->stack);
     uint32_t cont_stack_end = (uint32_t) g_pcont->stack_end;
     uint32_t stack_end;
-
-    // amount of stack taken by interrupt or exception handler
-    // and everything up to __wrap_system_restart_local
-    // (determined empirically, might break)
-    uint32_t offset = 0;
-    if (rst_info.reason == REASON_SOFT_WDT_RST) {
-        offset = 0x1b0;
-    }
-    else if (rst_info.reason == REASON_EXCEPTION_RST) {
-        offset = 0x1a0;
-    }
-    else if (rst_info.reason == REASON_WDT_RST) {
-        offset = 0x10;
-    }
 
     ets_printf_P(PSTR("\n>>>stack>>>\n"));
 
@@ -179,7 +165,45 @@ void __wrap_system_restart_local() {
       ets_printf_P(PSTR("\nlast failed alloc call: %08X(%d)\n"), (uint32_t)umm_last_fail_alloc_addr, umm_last_fail_alloc_size);
     }
 
-    custom_crash_callback( &rst_info, sp_dump + offset, stack_end );
+    custom_crash_callback( rst_info, sp_dump + offset, stack_end );
+}
+
+void __wrap_system_restart_local() {
+    register uint32_t sp asm("a1");
+    uint32_t sp_dump = sp;
+
+    if (gdb_present()) {
+        /* When GDBStub is present, exceptions are handled by GDBStub,
+           but Soft WDT will still call this function.
+           Trigger an exception to break into GDB.
+           TODO: check why gdb_do_break() or asm("break.n 0") do not
+           break into GDB here. */
+        raise_exception();  //?? strange - we may be here from a previous call to raise_exception()
+    }
+
+    struct rst_info rst_info;
+    memset(&rst_info, 0, sizeof(rst_info));
+    system_rtc_mem_read(0, &rst_info, sizeof(rst_info));
+
+    // amount of stack taken by interrupt or exception handler
+    // and everything up to __wrap_system_restart_local
+    // (determined empirically, might break)
+    uint32_t offset = 0;
+    if (rst_info.reason == REASON_SOFT_WDT_RST) {
+        offset = 0x1b0;
+    }
+    else if (rst_info.reason == REASON_EXCEPTION_RST) {
+        offset = 0x1a0;
+    }
+    else if (rst_info.reason == REASON_WDT_RST) {
+        offset = 0x10;
+    }
+    else {
+        __real_system_restart_local();
+        // return;  //?? strange - shouldn't this be __real_system_restart_local()
+    }
+
+    crashReport(&rst_info, sp_dump, offset);
 
     ets_delay_us(10000);
     __real_system_restart_local();
@@ -222,34 +246,59 @@ static void uart1_write_char_d(char c) {
 }
 
 static void raise_exception() {
+    register uint32_t sp asm("a1");
+    uint32_t sp_dump = sp;
+    s_panic.ps_reg = xt_rsr_ps();
+    if (0 != (s_panic.ps_reg & 0x0FU)) {
+        // Note, when "syscall" is called with interrupts disable
+        // a hardware wdt reset will follow. No stack trace.
+        // Need to generate debug info NOW if interrupts are disabled.
+        // Note this would have followed the path of "Soft WDT reset".
+        // TODO: Feed the hardware WDT so we can get through this process.
+        struct rst_info rst_info;
+        memset(&rst_info, 0, sizeof(rst_info));
+        rst_info.reason = REASON_SOFT_WDT_RST; // Fake it
+        crashReport(&rst_info, sp_dump, 0);
+    }
+
     __asm__ __volatile__ ("syscall");
+    // Note, observed that when we get called back at __wrap_system_restart_local()
+    // PS is 0x023.
     while (1); // never reached, needed to satisfy "noreturn" attribute
 }
 
 void abort() {
-    s_abort_called = true;
+    // register uint32_t sp asm("a1");
+    // s_panic.sp_dump = sp;
+    s_panic.abort_called = true;
     raise_exception();
 }
 
 void __unhandled_exception(const char *str) {
-    s_unhandled_exception = str;
+    // register uint32_t sp asm("a1");
+    // s_panic.sp_dump = sp;
+    s_panic.unhandled_exception = str;
     raise_exception();
 }
 
 void __assert_func(const char *file, int line, const char *func, const char *what) {
-    s_panic_file = file;
-    s_panic_line = line;
-    s_panic_func = func;
-    s_panic_what = what;
+    // register uint32_t sp asm("a1");
+    // s_panic.sp_dump = sp;
+    s_panic.file = file;
+    s_panic.line = line;
+    s_panic.func = func;
+    s_panic.what = what;
     gdb_do_break();     /* if GDB is not present, this is a no-op */
     raise_exception();
 }
 
 void __panic_func(const char* file, int line, const char* func) {
-    s_panic_file = file;
-    s_panic_line = line;
-    s_panic_func = func;
-    s_panic_what = 0;
+    // register uint32_t sp asm("a1");
+    // s_panic.sp_dump = sp;
+    s_panic.file = file;
+    s_panic.line = line;
+    s_panic.func = func;
+    s_panic.what = 0;
     gdb_do_break();     /* if GDB is not present, this is a no-op */
     raise_exception();
 }

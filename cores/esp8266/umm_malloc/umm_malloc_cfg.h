@@ -6,6 +6,20 @@
 #define _UMM_MALLOC_CFG_H
 
 #include <debug.h>
+// #include <interrupts.h>
+#ifndef __STRINGIFY
+#define __STRINGIFY(a) #a
+#endif
+#ifndef xt_rsil
+#define xt_rsil(level) (__extension__({uint32_t state; __asm__ __volatile__("rsil %0," __STRINGIFY(level) : "=a" (state)); state;}))
+#endif
+#ifndef xt_wsr_ps
+#define xt_wsr_ps(state)  __asm__ __volatile__("wsr %0,ps; isync" :: "a" (state) : "memory")
+#endif
+#ifndef xt_rsr_ps
+#define xt_rsr_ps()  (__extension__({uint32_t state; __asm__ __volatile__("rsr.ps %0;" : "=a" (state)); state;}))
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -110,8 +124,15 @@ extern char _heap_start;
  * called from within umm_malloc()
  */
 
+#if 1
+#define UMM_CRITICAL_ENTRY() do { uint32_t savePS=xt_rsil(3); if (1 == (++_locked)) _savedPS=savePS; } while(0)
+#define UMM_CRITICAL_EXIT()  do { if (0 == (--_locked)) xt_wsr_ps(_savedPS); } while(0)
+#else
 #define UMM_CRITICAL_ENTRY() ets_intr_lock()
+// ets_intr_unlock() will enable interrupts even if they were off when
+// ets_intr_lock() was called.
 #define UMM_CRITICAL_EXIT()  ets_intr_unlock()
+#endif
 
 /*
  * -D UMM_INTEGRITY_CHECK :

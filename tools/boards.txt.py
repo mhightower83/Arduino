@@ -865,13 +865,11 @@ boards = collections.OrderedDict([
         ],
     }),
     ( 'sonoff2', {
-        'name': 'ITEAD Sonoff - Modified',
+        'name': 'ITEAD Sonoff - Customized',
         'opts': {
-            '.build.board': 'SONOFF_SV',
+            '.build.board': 'SONOFF_IR',
             '.build.variant': 'itead',
             '.build.extra_flags': '-DESP8266',
-            '.build.flash_size': '16M',
-            '.FlashMode.qio': 'QIO (fast)',
             '.menu.BoardModel.sonoffSV': 'ITEAD Sonoff SV',
             '.menu.BoardModel.sonoffSV.build.board': 'SONOFF_SV',
             # '.menu.BoardModel.sonoffSV.build.variant': 'itead',
@@ -881,7 +879,7 @@ boards = collections.OrderedDict([
             # '.menu.BoardModel.sonoffTH.build.variant': 'itead',
             # '.menu.BoardModel.sonoffTH.build.extra_flags': '-DESP8266',
             '.menu.BoardModel.sonoffBasicIR': 'ITEAD Sonoff Basic - IRremote',
-            '.menu.BoardModel.sonoffBasicIR.build.board': 'SONOFF_BASIC',
+            '.menu.BoardModel.sonoffBasicIR.build.board': 'SONOFF_IR',
             # '.menu.BoardModel.sonoffBasicIR.build.variant': 'itead',
             # '.menu.BoardModel.sonoffBasicIR.build.extra_flags': '-DESP8266',
             '.menu.BoardModel.sonoffBasic': 'ITEAD Sonoff Basic',
@@ -898,7 +896,6 @@ boards = collections.OrderedDict([
             'resetmethod_menu_extra',
             'resetmethod_menu',
             'flashfreq_menu',
-            # 'flashmode_menu',
             'flashmode_qio',
             '16M15',
             'sdk',
@@ -911,6 +908,7 @@ boards = collections.OrderedDict([
             '.build.board': 'SONOFF_SV',
             '.build.variant': 'itead',
             '.build.extra_flags': '-DESP8266',
+            '.build.flash_size': '1M',
             '.menu.BoardModel.sonoffSV': 'ITEAD Sonoff SV',
             '.menu.BoardModel.sonoffSV.build.board': 'SONOFF_SV',
             '.menu.BoardModel.sonoffTH': 'ITEAD Sonoff TH',
@@ -1649,18 +1647,30 @@ def all_boards ():
         print("")
     if 'huzzah' in boardlist:
         print('# These setup some defaults I like.')
-        print('huzzah.menu.FlashSize.4M3M=4M (3M SPIFFS)')
-        print('huzzah.menu.UploadSpeed.921600=921600')
+        print('huzzah.menu.baud.460800.linux=460800')
+        print('huzzah.menu.baud.460800.macosx=460800')
+        print('huzzah.menu.baud.460800.upload.speed=460800')
         print('# Update with your USB Serial device. I had to add the .0 and 0x for this to work.')
         print('# These entries will group up with those in boards.txt')
         print('huzzah.vid.0=0x10C4')
         print('huzzah.pid.0=0xEA60')
+        print('huzzah.menu.eesz.4M3M=4M (3M SPIFFS)')
         print('')
     if 'sonoff' in boardlist:
-        print('sonoff.menu.UploadSpeed.230400.linux=230400')
-        print('sonoff.menu.UploadSpeed.256000.windows=256000')
-        print('sonoff.vid.0=0x0403')
-        print('sonoff.pid.0=0x6001')
+        print('sonoff.menu.baud.460800.linux=460800')
+        print('sonoff.menu.baud.460800.macosx=460800')
+        print('sonoff.menu.baud.460800.upload.speed=460800')
+        # print('sonoff.vid.0=0x0403')
+        # print('sonoff.pid.0=0x6001')
+        print('sonoff.menu.eesz.1M64=1M (64K SPIFFS)')
+        print('sonoff.menu.BoardModel.sonoffSV=ITEAD Sonoff SV')
+    if 'sonoff2' in boardlist:
+        print('sonoff2.menu.baud.460800.linux=460800')
+        print('sonoff2.menu.baud.460800.macosx=460800')
+        print('sonoff2.menu.baud.460800.upload.speed=460800')
+        print('sonoff2.vid.0=0x0403')
+        print('sonoff2.pid.0=0x6001')
+        print('sonoff2.menu.BoardModel.sonoffBasicIR=ITEAD Sonoff Basic - IRremote')
         print('')
 # Customized some defaults - end
 

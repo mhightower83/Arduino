@@ -3,17 +3,26 @@
 # The following boards were included:  --board=generic --board=esp8285 --board=huzzah --board=sonoff --board=sonoff2 --board=espurnakmc --board=espurna --board=espurna85
 
 # These setup some defaults I like.
-huzzah.menu.FlashSize.4M3M=4M (3M SPIFFS)
-huzzah.menu.UploadSpeed.921600=921600
+huzzah.menu.baud.460800.linux=460800
+huzzah.menu.baud.460800.macosx=460800
+huzzah.menu.baud.460800.upload.speed=460800
 # Update with your USB Serial device. I had to add the .0 and 0x for this to work.
 # These entries will group up with those in boards.txt
 huzzah.vid.0=0x10C4
 huzzah.pid.0=0xEA60
+huzzah.menu.eesz.4M3M=4M (3M SPIFFS)
 
-sonoff.menu.UploadSpeed.230400.linux=230400
-sonoff.menu.UploadSpeed.256000.windows=256000
-sonoff.vid.0=0x0403
-sonoff.pid.0=0x6001
+sonoff.menu.baud.460800.linux=460800
+sonoff.menu.baud.460800.macosx=460800
+sonoff.menu.baud.460800.upload.speed=460800
+sonoff.menu.eesz.1M64=1M (64K SPIFFS)
+sonoff.menu.BoardModel.sonoffSV=ITEAD Sonoff SV
+sonoff2.menu.baud.460800.linux=460800
+sonoff2.menu.baud.460800.macosx=460800
+sonoff2.menu.baud.460800.upload.speed=460800
+sonoff2.vid.0=0x0403
+sonoff2.pid.0=0x6001
+sonoff2.menu.BoardModel.sonoffBasicIR=ITEAD Sonoff Basic - IRremote
 
 #
 # Do not create pull-requests for this file only, CI will not accept them.
@@ -970,6 +979,7 @@ sonoff.menu.BoardModel.sonoffBasic.build.board=SONOFF_BASIC
 sonoff.menu.BoardModel.sonoffS20.build.board=SONOFF_S20
 sonoff.menu.BoardModel.sonoffSV.build.board=SONOFF_SV
 sonoff.build.extra_flags=-DESP8266
+sonoff.build.flash_size=1M
 sonoff.upload.tool=esptool
 sonoff.upload.maximum_data_size=81920
 sonoff.upload.wait_for_upload_port=true
@@ -1215,22 +1225,20 @@ sonoff.menu.baud.921600=921600
 sonoff.menu.baud.921600.upload.speed=921600
 
 ##############################################################
-sonoff2.name=ITEAD Sonoff - Modified
+sonoff2.name=ITEAD Sonoff - Customized
 sonoff2.menu.BoardModel.sonoffBasicIR=ITEAD Sonoff Basic - IRremote
 sonoff2.menu.BoardModel.sonoffS20=ITEAD Sonoff S20
 sonoff2.menu.BoardModel.sonoffSV=ITEAD Sonoff SV
-sonoff2.FlashMode.qio=QIO (fast)
-sonoff2.build.board=SONOFF_SV
-sonoff2.menu.BoardModel.sonoffBasicIR.build.board=SONOFF_BASIC
+sonoff2.menu.BoardModel.sonoffTH=ITEAD Sonoff TH
+sonoff2.menu.BoardModel.sonoffBasic=ITEAD Sonoff Basic
+sonoff2.menu.BoardModel.sonoffBasicIR.build.board=SONOFF_IR
 sonoff2.build.variant=itead
 sonoff2.menu.BoardModel.sonoffTH.build.board=SONOFF_TH
-sonoff2.menu.BoardModel.sonoffBasic=ITEAD Sonoff Basic
+sonoff2.build.board=SONOFF_IR
 sonoff2.menu.BoardModel.sonoffBasic.build.board=SONOFF_BASIC
-sonoff2.menu.BoardModel.sonoffTH=ITEAD Sonoff TH
 sonoff2.menu.BoardModel.sonoffS20.build.board=SONOFF_S20
 sonoff2.menu.BoardModel.sonoffSV.build.board=SONOFF_SV
 sonoff2.build.extra_flags=-DESP8266
-sonoff2.build.flash_size=16M
 sonoff2.upload.tool=esptool
 sonoff2.upload.maximum_data_size=81920
 sonoff2.upload.wait_for_upload_port=true

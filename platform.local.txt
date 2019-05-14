@@ -117,7 +117,7 @@ runtime.tools.xtensa-lx106-elf-gcc.path.windows={runtime.platform.path}\tools\xt
 tools.elfsum.cmd=xtensa-lx106-elf-objdump
 tools.elfsum.path.linux={runtime.tools.xtensa-lx106-elf-gcc.path}/bin/
 tools.elfsum.path.windows={runtime.tools.xtensa-lx106-elf-gcc.path}\bin\
-tools.elfsum.flags=-h -w --section=.text --section=.irom0.text --section=.data --section=.bss --section=.rodata
+tools.elfsum.flags=-h -w --section=.text --section=.irom0.text  --section=.text1 --section=.data --section=.bss --section=.rodata
 tools.elfsum.extra_flags=
 recipe.hooks.linking.postlink.01.pattern.linux="{tools.elfsum.path}{tools.elfsum.cmd}" {tools.elfsum.flags} {tools.elfsum.extra_flags} "{build.path}/{build.project_name}.elf"
 recipe.hooks.linking.postlink.01.pattern.windows="{tools.elfsum.path}{tools.elfsum.cmd}" {tools.elfsum.flags} {tools.elfsum.extra_flags} "{build.path}\{build.project_name}.elf"
