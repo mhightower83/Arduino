@@ -40,30 +40,17 @@ extern "C" {
 
 extern void __real_system_restart_local();
 
-// These will be pointers to PROGMEM const strings
 #define PS_INVALID_VALUE (0x80000000U)
 static struct _PANIC {
+// These will be pointers to PROGMEM const strings
     const char* file;
     const char* func;
     const char* what;
     const char* unhandled_exception;
-    // uint32_t sp_dump;
     uint32_t ps_reg;
     int line;
     bool abort_called;
 } s_panic = {NULL, NULL, NULL, NULL, PS_INVALID_VALUE, 0, false};
-
-// static const char* s_panic_file = 0;
-// static int s_panic_line = 0;
-// static const char* s_panic_func = 0;
-// static const char* s_panic_what = 0;
-//
-// static bool s_abort_called = false;
-// static const char* s_unhandled_exception = NULL;
-//
-// static uint32_t s_sp_dump = 0;
-// #define PS_INVALID_VALUE (0x80000000U)
-// static uint32_t s_ps_reg = PS_INVALID_VALUE;
 
 void abort() __attribute__((noreturn));
 static void uart_write_char_d(char c);
@@ -199,8 +186,11 @@ void __wrap_system_restart_local() {
         offset = 0x10;
     }
     else {
-        __real_system_restart_local();
-        // return;  //?? strange - shouldn't this be __real_system_restart_local()
+        return;
+        // return ?? why would we not pass on to __real_system_restart_local()
+        // What is system_restart_local()? The SDK has a system_restart().
+        // I cannot find a definition for system_restart_local().
+        // ?? __real_system_restart_local();
     }
 
     crashReport(&rst_info, sp_dump, offset);
@@ -268,22 +258,16 @@ static void raise_exception() {
 }
 
 void abort() {
-    // register uint32_t sp asm("a1");
-    // s_panic.sp_dump = sp;
     s_panic.abort_called = true;
     raise_exception();
 }
 
 void __unhandled_exception(const char *str) {
-    // register uint32_t sp asm("a1");
-    // s_panic.sp_dump = sp;
     s_panic.unhandled_exception = str;
     raise_exception();
 }
 
 void __assert_func(const char *file, int line, const char *func, const char *what) {
-    // register uint32_t sp asm("a1");
-    // s_panic.sp_dump = sp;
     s_panic.file = file;
     s_panic.line = line;
     s_panic.func = func;
@@ -293,8 +277,6 @@ void __assert_func(const char *file, int line, const char *func, const char *wha
 }
 
 void __panic_func(const char* file, int line, const char* func) {
-    // register uint32_t sp asm("a1");
-    // s_panic.sp_dump = sp;
     s_panic.file = file;
     s_panic.line = line;
     s_panic.func = func;
