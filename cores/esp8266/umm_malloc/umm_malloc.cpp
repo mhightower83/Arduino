@@ -504,211 +504,240 @@ extern "C" {
 
 #if 1
 
-  // Printing from the malloc routines is tricky. Since a lot of library calls
-  // will want to do malloc.
-  // This approach appears to work almost all the time. Better than Method 2.
-  // Method 1
-  // Borrowed from core_postmortem.cpp.
-  #if defined(DEBUG_ESP_PORT) && ( defined(DEBUG_ESP_CORE) || defined(DEBUG_ESP_OOM) )
-  static void ets_printf_P(const char *str, ...) {
-      char destStr[160];
-      char *c = destStr;
-      va_list argPtr;
-      va_start(argPtr, str);
-      vsnprintf(destStr, sizeof(destStr), str, argPtr);
-      va_end(argPtr);
-      while (*c) {
-          ets_putc(*(c++));
-      }
-  }
-  #define printf(fmt, ...)  do { ets_printf_P( PSTR(fmt), ##__VA_ARGS__); } while (0)
-  #else
-  #define printf(fmt, ...)  do { } while (0)
-  #endif
+// Printing from the malloc routines is tricky. Since a lot of library calls
+// will want to do malloc.
+// This approach appears to work almost all the time. Better than Method 2.
+// Method 1
+// Borrowed from core_postmortem.cpp.
+#if defined(DEBUG_ESP_PORT) && ( defined(DEBUG_ESP_CORE) || defined(DEBUG_ESP_OOM) )
+static void ets_printf_P(const char *str, ...) {
+    char destStr[160];
+    char *c = destStr;
+    va_list argPtr;
+    va_start(argPtr, str);
+    vsnprintf(destStr, sizeof(destStr), str, argPtr);
+    va_end(argPtr);
+    while (*c) {
+        ets_putc(*(c++));
+    }
+}
+#define printf(fmt, ...)  do { ets_printf_P( PSTR(fmt), ##__VA_ARGS__); } while (0)
+#else
+#define printf(fmt, ...)  do { } while (0)
+#endif
 
 #else
 
-  // Method 2
-  #if defined(DEBUG_ESP_PORT) && ( defined(DEBUG_ESP_CORE) || defined(DEBUG_ESP_OOM) )
-  // Only this needs ""#include <HardwareSerial.h>""
-  // This does no appear to be working all the time. Sometimes it cannot print.
-  // Example case when reporting that poison is missing
-  #define printf(fmt, ...)  do { DEBUG_ESP_PORT.printf_P( PSTR(fmt), ##__VA_ARGS__); } while (0)
-  #else
-  #define printf(fmt, ...)  do { } while (0)
-  #endif
+// Method 2
+#if defined(DEBUG_ESP_PORT) && ( defined(DEBUG_ESP_CORE) || defined(DEBUG_ESP_OOM) )
+// Only this needs ""#include <HardwareSerial.h>""
+// This does no appear to be working all the time. Sometimes it cannot print.
+// Example case when reporting that poison is missing
+#define printf(fmt, ...)  do { DEBUG_ESP_PORT.printf_P( PSTR(fmt), ##__VA_ARGS__); } while (0)
+#else // defined(DEBUG_ESP_PORT) &&  ...
+#define printf(fmt, ...)  do { } while (0)
+#endif // defined(DEBUG_ESP_PORT) &&  ...
 #endif
 
 #if UMM_CRITICAL_METHOD == 1
+/*
+ * A nested counted lock -
+ *
+ * On each nested_lock_entry() call a depth count is incremented and on each
+ * nested_lock_exit() that depth count is decremented.
+ *
+ * At each entry the current calling INTLEVEL is compared to the default for
+ * nested lock, NESTED_LOCK_INTLEVEL. The higher value is keep and the
+ * previous is saved, up to a limit defined by NESTED_LOCK_SAVEDPS_LIMIT.
+ *
+ * When NESTED_LOCK_SAVEDPS_LIMIT is exceeded the INTLEVEL is kept at its
+ * peak value until nested lock unwinds down to the NESTED_LOCK_SAVEDPS_LIMIT.
+ * Then each nested_lock_exit will restore the orginal INTLEVEL for that
+ * matching nested_lock_entry.
+ *
+ */
+constexpr size_t NESTED_LOCK_SAVEDPS_LIMIT =  8U;  // two is the minimum we can get away with
 
-  static nested_lock_t _nested_lock =
-  #if DEBUG_NESTED_LOCK
-   { {0U}, 0U, 0U, 0U };
-  #else
-   { {0U}, 0U};
-  #endif
+static struct _DLX_NESTED_LOCK {
+    uint32_t saved_ps[NESTED_LOCK_SAVEDPS_LIMIT];
+    size_t depth;
+#if DEBUG_NESTED_LOCK_INFO
+    size_t max_depth;
+    unsigned char max_intlevel;
+#endif
+} _nested_lock_dx =
+#if DEBUG_NESTED_LOCK_INFO
+        { {0U}, 0U, 0U, 0U };
+#else
+        { {0U}, 0U};
+#endif
 
-  #if DEBUG_NESTED_LOCK
-    size_t getMaxLockDepthLocalLock(nested_lock_t *pCSL) { return pCSL->max_depth;}
-    unsigned char getMaxIntLevelLocalLock(nested_lock_t *pCSL) { return pCSL->max_intlevel;}
-    size_t getMaxLockDepth(void) { return _nested_lock.max_depth;}
-    size_t getLockDepth(void) { return _nested_lock.depth;}
-    unsigned char getMaxIntLevel(void) { return _nested_lock.max_intlevel;}
-  #endif
+#if DEBUG_NESTED_LOCK_INFO
+size_t getLockDepth(void) { return _nested_lock_dx.depth; }
+size_t getMaxLockDepth(void) { return _nested_lock_dx.max_depth; }
+unsigned char getMaxIntLevel(void) { return _nested_lock_dx.max_intlevel; }
+#endif
 
-  void nested_lock_entry(nested_lock_t *pCSL){
-      uint32_t savedPS = xt_rsil(MAX_INTLEVEL);
-      // Between the original and proposed INTLEVEL Keep whichever is higher.
-      unsigned char intLevel = (unsigned char)0x0FU & (unsigned char)savedPS;
-      if (CSL_INTLEVEL > intLevel) {
-          xt_rsil(CSL_INTLEVEL);
-      } else {
-          xt_wsr_ps(savedPS);
-  #if DEBUG_NESTED_LOCK
-          if (intLevel > pCSL->max_intlevel)
-              pCSL->max_intlevel = intLevel;
-  #endif
-      }
-      size_t depth = pCSL->depth;
-      if (CSL_SAVEDPS_LIMIT > depth) {
-          pCSL->saved_ps[depth] = savedPS;
-      }
-      depth += 1;
-      pCSL->depth = depth;
-  #if DEBUG_NESTED_LOCK
-      if (depth > pCSL->max_depth) {
-          pCSL->max_depth = depth;
-      }
-  #endif
-      if (CSL_SAVEDPS_LIMIT < depth) {
-          if (~(size_t)0 == depth) {
-              xt_rsil(0);
-              panic();
-          }
-  #if defined(DEBUG_DLX_NESTED_LOCK) && DEBUG_DLX_NESTED_LOCK > 1
-          xt_rsil(0);
-          panic();
-  #endif
-          // We have run out of room. Stop storing PS and on the Exit side
-          // don't take values off until we pass below CSL_SAVEDPS_LIMIT.
-          // This logic should make the event harmless. INTLEVEL will remain set
-          // to a higher level until the nested calls unwind down to the
-          // number we have for storing PS. Nobody should stay in a critial
-          // state that long anyway.
-      }
-  }
-  void nested_lock_exit(nested_lock_t *pCSL){
-      pCSL->depth -= 1U;
-      size_t depth = pCSL->depth;
-      if (~(size_t)0 == depth) {
-          pCSL->depth = 0U; // Attempt recovery by Clamping value
-  #if DEBUG_DLX_NESTED_LOCK
-          xt_rsil(0);
-          panic();
-  #endif
-      } else if (CSL_SAVEDPS_LIMIT > depth) {
-          xt_wsr_ps(pCSL->saved_ps[depth]);
-      }
-  }
+void nested_lock_entry(void){
+#if 1
+    uint32_t savedPS = xt_rsr_ps();
+    unsigned char intLevel = (unsigned char)0x0F & (unsigned char)savedPS;
+    if (NESTED_LOCK_INTLEVEL > intLevel)
+        xt_rsil(NESTED_LOCK_INTLEVEL);
+#else
+    uint32_t savedPS = xt_rsil(MAX_INTLEVEL);
+    unsigned char intLevel = (unsigned char)0x0F & (unsigned char)savedPS;
+    if (NESTED_LOCK_INTLEVEL > intLevel) {
+        xt_rsil(NESTED_LOCK_INTLEVEL);
+    } else {
+        xt_wsr_ps(savedPS);
+    }
+#endif
+
+#if DEBUG_NESTED_LOCK_INFO
+    if (intLevel > _nested_lock_dx.max_intlevel)
+        _nested_lock_dx.max_intlevel = intLevel;
+#endif
+
+    size_t depth = _nested_lock_dx.depth;
+    if (NESTED_LOCK_SAVEDPS_LIMIT > depth)
+        _nested_lock_dx.saved_ps[depth] = savedPS;
+
+    depth += 1;
+    _nested_lock_dx.depth = depth;
+#if DEBUG_NESTED_LOCK_INFO
+    if (depth > _nested_lock_dx.max_depth)
+        _nested_lock_dx.max_depth = depth;
+
+#endif
+    if (NESTED_LOCK_SAVEDPS_LIMIT < depth) {
+        if (~(size_t)0 == depth) {
+            // Currently if interrupts are disabled, panic message will not print
+            xt_rsil(0);
+            panic();
+        }
+#if defined(DEBUG_DLX_NESTED_LOCK) && DEBUG_DLX_NESTED_LOCK > 1
+        xt_rsil(0);
+        panic();
+#endif
+        // We have run out of room. Stop storing PS and on the Exit side
+        // don't take values off until we pass below NESTED_LOCK_SAVEDPS_LIMIT.
+        // This logic should make the event harmless. INTLEVEL will remain set
+        // to a higher level until the nested calls unwind down to the
+        // number we have for storing PS. Nobody should stay in a critial
+        // state that long anyway.
+    }
+}
+void nested_lock_exit(void) {
+    _nested_lock_dx.depth -= 1U;
+    size_t depth = _nested_lock_dx.depth;
+    if (~(size_t)0 == depth) {
+        // Too many exit calls(), Attempt recovery by Clamping value
+        _nested_lock_dx.depth = 0U;
+#if DEBUG_DLX_NESTED_LOCK
+        xt_rsil(0);
+        panic();
+#endif
+    } else if (NESTED_LOCK_SAVEDPS_LIMIT > depth) {
+        xt_wsr_ps(_nested_lock_dx.saved_ps[depth]);
+    }
+}
 
 #elif UMM_CRITICAL_METHOD == 2
-
-  static struct _SIMPLE_NESTED_LOCK  {
+  /*
+   * A simple nested counted lock - to implimented interrupt disable and
+   * restore, when count returns to zero.
+   *
+   * Weakness: w/o before/after INTLEVEL monitoring, INTLEVEL may be
+   * inadvertently lowered.
+   *
+   */
+static struct _SIMPLE_NESTED_LOCK  {
     uint32_t saved_ps;
     size_t depth;
-  } nested_lock = { 0U, 0U };
+} _nested_lock = { 0U, 0U };
 
-  #if DEBUG_NESTED_LOCK
-    // Stubs - not implemented yet.
-    size_t getMaxLockDepth(void) { return 0U;}
-    unsigned char getMaxIntLevel(void) { return 0U;}
-  #endif
+#if DEBUG_NESTED_LOCK_INFO
+size_t getLockDepth(void) { return _nested_lock.depth;}
+// Stubs - not implemented yet.
+size_t getMaxLockDepth(void) { return 0U;}
+unsigned char getMaxIntLevel(void) { return 0U;}
+#endif
 
-  void simple_nested_lock(void) {
+void nested_lock_entry(void) {
     // INTLEVEL 3 is the same value that ets_intr_lock() uses.
-    uint32_t savePS = xt_rsil(3);
-    if (0U == nested_lock.depth){
-      nested_lock.saved_ps = savePS;
+    uint32_t savePS = xt_rsil(NESTED_LOCK_INTLEVEL);
+    if (0U == _nested_lock.depth){
+      _nested_lock.saved_ps = savePS;
     }
-    nested_lock.depth += 1U;
-  }
+    _nested_lock.depth++;
+}
 
-  void simple_nested_unlock(void) {
-    nested_lock.depth -= 1U;
-    if (0U == nested_lock.depth) {
-      xt_wsr_ps(nested_lock.saved_ps);
+void nested_lock_exit(void) {
+    _nested_lock.depth--;
+    if (0U == _nested_lock.depth) {
+        xt_wsr_ps(_nested_lock.saved_ps);
     }
-  }
+}
 #endif
 
 #if WRAP_ETS_INTR_LOCK
+#if (UMM_CRITICAL_METHOD == 1) || (UMM_CRITICAL_METHOD == 2)
 
-  #if UMM_CRITICAL_METHOD == 1
+void ICACHE_RAM_ATTR __wrap_ets_intr_lock(void) {
+    nested_lock_entry();
+}
 
-    void ICACHE_RAM_ATTR __wrap_ets_intr_lock(void) {
-        nested_lock_entry(&_nested_lock);
-    }
+void ICACHE_RAM_ATTR __wrap_ets_intr_unlock(void){
+    nested_lock_exit();
+}
+#else // #if (UMM_CRITICAL_METHOD == 1) || (UMM_CRITICAL_METHOD == 2)
 
-    void ICACHE_RAM_ATTR __wrap_ets_intr_unlock(void){
-        nested_lock_exit(&_nested_lock);
-    }
+// passthrough to the old ets_intr_lock ...
 
-  #elif UMM_CRITICAL_METHOD == 2
+extern void __real_ets_intr_lock(void);
+extern void __real_ets_intr_unlock(void);
 
-    void ICACHE_RAM_ATTR __wrap_ets_intr_lock(void) {
-        simple_nested_lock();
-    }
+#if DEBUG_NESTED_LOCK_INFO
+static struct _TRACK_ESP_INTR_LOCK {
+    size_t depth;
+    size_t max_depth;
+    unsigned char max_intlevel;
+} esp_lock_stats = { 0U, 0U, 0U };
 
-    void ICACHE_RAM_ATTR __wrap_ets_intr_unlock(void){
-        simple_nested_unlock();
-    }
-  #else
-
-    // passthrough to the old ets_intr_lock ...
-
-    extern void __real_ets_intr_lock(void);
-    extern void __real_ets_intr_unlock(void);
-
-    #if DEBUG_NESTED_LOCK
-      static struct _TRACK_ESP_INTR_LOCK {
-        size_t depth;
-        size_t max_depth;
-        unsigned char max_intlevel;
-      } esp_lock_stats = { 0U, 0U, 0U };
-
-      size_t getMaxLockDepth(void) { return esp_lock_stats.max_depth;}
-      unsigned char getMaxIntLevel(void) { return esp_lock_stats.max_intlevel;}
-    #endif
-
-    void ICACHE_RAM_ATTR __wrap_ets_intr_lock(void) {
-    #if DEBUG_NESTED_LOCK
-        uint32_t savedPS = xt_rsr_ps();
-    #endif
-
-        __real_ets_intr_lock();
-
-    #if DEBUG_NESTED_LOCK
-        unsigned char intLevel = (unsigned char)0x0FU & (unsigned char)savedPS;
-        if (intLevel > esp_lock_stats.max_intlevel)
-            esp_lock_stats.max_intlevel = intLevel;
-
-        esp_lock_stats.depth += 1U;
-        size_t depth = esp_lock_stats.depth;
-        if (depth > esp_lock_stats.max_depth) {
-            esp_lock_stats.max_depth = depth;
-        }
-    #endif
-    }
-
-    void ICACHE_RAM_ATTR __wrap_ets_intr_unlock(void){
-    #if DEBUG_NESTED_LOCK
-        esp_lock_stats.depth -= 1U;
-    #endif
-
-        __real_ets_intr_unlock();
-    }
-  #endif
+size_t getLockDepth(void) { return esp_lock_stats.depth;}
+size_t getMaxLockDepth(void) { return esp_lock_stats.max_depth;}
+unsigned char getMaxIntLevel(void) { return esp_lock_stats.max_intlevel;}
 #endif
+
+void ICACHE_RAM_ATTR __wrap_ets_intr_lock(void) {
+#if DEBUG_NESTED_LOCK_INFO
+    uint32_t savedPS = xt_rsr_ps();
+#endif
+
+    __real_ets_intr_lock();
+
+#if DEBUG_NESTED_LOCK_INFO
+    unsigned char intLevel = (unsigned char)0x0FU & (unsigned char)savedPS;
+    if (intLevel > esp_lock_stats.max_intlevel)
+        esp_lock_stats.max_intlevel = intLevel;
+
+    esp_lock_stats.depth += 1U;
+    size_t depth = esp_lock_stats.depth;
+    if (depth > esp_lock_stats.max_depth)
+        esp_lock_stats.max_depth = depth;
+#endif // #if DEBUG_NESTED_LOCK_INFO
+}
+
+void ICACHE_RAM_ATTR __wrap_ets_intr_unlock(void){
+#if DEBUG_NESTED_LOCK_INFO
+    esp_lock_stats.depth -= 1U;
+#endif
+
+    __real_ets_intr_unlock();
+}
+#endif  // #if (UMM_CRITICAL_METHOD == 1) || (UMM_CRITICAL_METHOD == 2)
+#endif  // #if WRAP_ETS_INTR_LOCK
 
 
 // From UMM, the last caller of a malloc/realloc/calloc which failed:

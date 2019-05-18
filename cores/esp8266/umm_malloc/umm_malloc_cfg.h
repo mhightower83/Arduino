@@ -124,8 +124,8 @@ extern char _heap_start;
  * called from within umm_malloc()
  */
 
-#define DEBUG_NESTED_LOCK 1
-#define UMM_CRITICAL_METHOD 1
+// #define DEBUG_NESTED_LOCK_INFO 1
+// #define UMM_CRITICAL_METHOD 1
 #define WRAP_ETS_INTR_LOCK 1
 /*
  * There are three methods for handling for UMM_CRITICAL_ENTRY/EXIT
@@ -133,7 +133,7 @@ extern char _heap_start;
  *   -DUMM_CRITICAL_METHOD=1 - Deluxe nested lock
  *   -DUMM_CRITICAL_METHOD=2 - simple nested lock
  *
- * -DDEBUG_NESTED_LOCK=1
+ * -DDEBUG_NESTED_LOCK_INFO=1
  * Will track MAX INTLEVEL at entry to lock function and MAX depth of nesting.
  * Not implimented at this time for -DUMM_CRITICAL_METHOD=2.
  *
@@ -144,76 +144,61 @@ extern char _heap_start;
  * For platform.txt find "compiler.c.elf.flags=..." and append:
  * "-Wl,-wrap,ets_intr_lock -Wl,-wrap,ets_intr_unlock" to the end of the line.
  *
- * If combined with DEBUG_NESTED_LOCK=1 and the UMM_CRITICAL_METHOD is left
- * undefined, you can get the the information that is being tracked on the
- * calls for the SDK's ets_intr_lock/unlock function.
+ * If combined with DEBUG_NESTED_LOCK_INFO=1 and the UMM_CRITICAL_METHOD is
+ * left undefined, you can get the the information that is being tracked on
+ * the calls for the SDK's ets_intr_lock/unlock function.
  *
  */
-#if UMM_CRITICAL_METHOD == 1
 
-/*
- * -DDEBUG_DLX_NESTED_LOCK=1
- * Call panic() when there are more calls to exit than entry.
- *
- * -DDEBUG_DLX_NESTED_LOCK=2
- * In addition to above, call panic() when the the saved_ps[] size has been
- * exceeded.
- */
-  // #ifndef DEBUG_DLX_NESTED_LOCK
-  //   #define DEBUG_DLX_NESTED_LOCK 1 // 2
-  // #endif
-
-  #define CSL_INTLEVEL       3
-  #define MAX_INTLEVEL       15
-  constexpr size_t CSL_SAVEDPS_LIMIT = 8;  // two is the minimum we can get away with
-
-  typedef struct _DLX_NESTED_LOCK {
-    uint32_t saved_ps[CSL_SAVEDPS_LIMIT];
-    size_t depth;
-    #if DEBUG_NESTED_LOCK
-      size_t max_depth;
-      unsigned char max_intlevel;
-    #endif
-  } nested_lock_t;
-
-  void ICACHE_RAM_ATTR nested_lock_entry(nested_lock_t *pCSL);
-  void ICACHE_RAM_ATTR nested_lock_exit(nested_lock_t *pCSL);
-
-  #if DEBUG_NESTED_LOCK
-    size_t getMaxLockDepthLocalLock(nested_lock_t *pCSL);
-    unsigned char getMaxIntLevelLocalLock(nested_lock_t *pCSL);
-    size_t getLockDepth(void);
-    size_t getMaxLockDepth(void);
-    unsigned char getMaxIntLevel(void);
-  #endif
-
-  #define UMM_CRITICAL_ENTRY() nested_lock_entry(&_nested_lock)
-  #define UMM_CRITICAL_EXIT()  nested_lock_exit(&_nested_lock)
-  // #define UMM_CRITICAL_ENTRY() ets_intr_lock()
-  // #define UMM_CRITICAL_EXIT()  ets_intr_unlock()
-
-#elif UMM_CRITICAL_METHOD == 2
-
-  void simple_nested_lock(void);
-  void simple_nested_unlock(void)
-  #define UMM_CRITICAL_ENTRY() simple_nested_lock()
-  #define UMM_CRITICAL_EXIT()  simple_nested_unlock()
+#if DEBUG_NESTED_LOCK_INFO
+  size_t getLockDepth(void);
+  size_t getMaxLockDepth(void);
+  unsigned char getMaxIntLevel(void);
 #else
-
-  #if WRAP_ETS_INTR_LOCK
-    #if DEBUG_NESTED_LOCK
-      size_t getMaxLockDepth(void);
-      unsigned char getMaxIntLevel(void);
-    #endif
-    #define UMM_CRITICAL_ENTRY() __wrap_ets_intr_lock()
-    #define UMM_CRITICAL_EXIT()  __wrap_ets_intr_unlock()
-  #else
-     #define UMM_CRITICAL_ENTRY() ets_intr_lock()
-     // ets_intr_unlock() will enable interrupts even if they were off when
-     // ets_intr_lock() was called.
-     #define UMM_CRITICAL_EXIT()  ets_intr_unlock()
-  #endif
+  #define getLockDepth()    (__extension__({ (size_t)0U; }))
+  #define getMaxLockDepth() (__extension__({ (size_t)0U; }))
+  #define getMaxIntLevel()  (__extension__({ (unsigned char)0U; }))
 #endif
+
+#if UMM_CRITICAL_METHOD == 1
+ /*
+  * -DDEBUG_DLX_NESTED_LOCK=1
+  * Call panic() when there are more calls to exit than entry.
+  *
+  * -DDEBUG_DLX_NESTED_LOCK=2
+  * In addition to above, call panic() when the the saved_ps[] size has been
+  * exceeded.
+ */
+ // #ifndef DEBUG_DLX_NESTED_LOCK
+ //   #define DEBUG_DLX_NESTED_LOCK 1 // 2
+ // #endif
+#endif
+
+#if (UMM_CRITICAL_METHOD == 1) || (UMM_CRITICAL_METHOD == 2)
+
+#define NESTED_LOCK_INTLEVEL                  3
+#define MAX_INTLEVEL                         15
+
+void ICACHE_RAM_ATTR nested_lock_entry(void);
+void ICACHE_RAM_ATTR nested_lock_exit(void);
+#define UMM_CRITICAL_ENTRY() nested_lock_entry()
+#define UMM_CRITICAL_EXIT()  nested_lock_exit()
+
+#else // #if (UMM_CRITICAL_METHOD == 1) || (UMM_CRITICAL_METHOD == 2)
+
+#define nested_lock_entry ets_intr_lock
+#define nested_lock_exit ets_intr_unlock
+
+#if WRAP_ETS_INTR_LOCK
+#define UMM_CRITICAL_ENTRY() __wrap_ets_intr_lock()
+#define UMM_CRITICAL_EXIT()  __wrap_ets_intr_unlock()
+#else // #if WRAP_ETS_INTR_LOCK
+#define UMM_CRITICAL_ENTRY() ets_intr_lock()
+// ets_intr_unlock() will enable interrupts even if they were off when
+// ets_intr_lock() was called.
+#define UMM_CRITICAL_EXIT()  ets_intr_unlock()
+#endif // #if WRAP_ETS_INTR_LOCK
+#endif // #if (UMM_CRITICAL_METHOD == 1) || (UMM_CRITICAL_METHOD == 2)
 
 /*
  * -D UMM_INTEGRITY_CHECK :
