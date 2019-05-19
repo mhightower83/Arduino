@@ -73,46 +73,44 @@ extern void __custom_crash_callback( struct rst_info * rst_info, uint32_t stack,
 
 extern void custom_crash_callback( struct rst_info * rst_info, uint32_t stack, uint32_t stack_end ) __attribute__ ((weak, alias("__custom_crash_callback")));
 
-static bool install_putc1 = false;
+static bool install_putc1 = true;
 #define WDT_TIME_TO_FEED (500000*clockCyclesPerMicrosecond())
 // Prints need to use our library function to allow for file and function
 // to be safely accessed from flash. This function encapsulates snprintf()
 // [which by definition will 0-terminate, if the buffer is big enough] and
 // dumping to the UART.
 void core_postmortem_printf(const char *str, ...) {
-    // if (install_putc1) {
-    //     // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
-    //     ets_install_putc1((void *)&uart_write_char_d);
-    //     install_putc1 = false;
-    // }
+    if (install_putc1) {
+        // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
+        ets_install_putc1((void *)&uart_write_char_d);
+        install_putc1 = false;
+    }
     char destStr[160];
     int length;
-    // uint32_t wdt_last_feeding = ESP.getCycleCount() - WDT_TIME_TO_FEED;
+    uint32_t wdt_last_feeding = ESP.getCycleCount() - WDT_TIME_TO_FEED;
     char *c = destStr;
     va_list argPtr;
     va_start(argPtr, str);
     length = vsnprintf(destStr, sizeof(destStr), str, argPtr);
     va_end(argPtr);
-    // if ((int)sizeof(destStr) <= length) // Buffer too small?
-    //     destStr[sizeof(destStr) - 1] = '\0';
+    if ((int)sizeof(destStr) <= length) // Buffer too small?
+        destStr[sizeof(destStr) - 1] = '\0';
     while (*c) {
         ets_putc(*(c++));
-        // // If we are printing a lot, make sure we get to finish.
-        // if (ESP.getCycleCount() - wdt_last_feeding >= WDT_TIME_TO_FEED) {
-        //     system_soft_wdt_feed();
-        //     system_soft_wdt_stop(); // Previous testing needed this repeated after feeding
-        //     wdt_last_feeding = ESP.getCycleCount();
-        // }
+        // If we are printing a lot, make sure we get to finish.
+        if ((ESP.getCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {
+            system_soft_wdt_feed();
+            system_soft_wdt_stop(); // Previous testing needed this repeated after feeding
+            wdt_last_feeding = ESP.getCycleCount();
+        }
     }
+    system_soft_wdt_restart();
 }
 #define ets_printf_P core_postmortem_printf
 
-void core_postmortem_printf_init(void) {
-  // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
-  ets_install_putc1((void *)&uart_write_char_d);
-}
-
 static void crashReport(struct rst_info *rst_info, uint32_t sp_dump, uint32_t offset) {
+
+    install_putc1 = true;
 
     if (PS_INVALID_VALUE != s_panic.ps_reg)
         ets_printf_P(PSTR("\nPS Register=0x%08X, Interrupts %S\n"), s_panic.ps_reg, (s_panic.ps_reg & 0x0FU)?PSTR("disabled"):PSTR("enabled"));
@@ -255,17 +253,25 @@ static void uart1_write_char_d(char c) {
     }
     USF(1) = c;
 }
-
+//
+// __panic_func, __assert_func, __unhandled_exception, and abort all call
+// raise_exception() which then finishes with a "syscall". After a delay, we
+// are then called back at __wrap_system_restart_local with a soft wdt reason.
+//  * Why not just print the results straight away?
+//  * What is "syscall" doing for us?
+//  * Where is the code for system_restart_local?
+//
 static void raise_exception() {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
     s_panic.ps_reg = xt_rsr_ps();
     if (0 != (s_panic.ps_reg & 0x0FU)) {
-        // Note, when "syscall" is called with interrupts disable
-        // a hardware wdt reset will follow. No stack trace.
+        // Note, when "syscall" is called with interrupts disable or
+        // a system_soft_wdt_stop() has been called and the wdt was not
+        // restarted then a hardware wdt reset will follow. We will not
+        // get a callback.
         // Need to generate debug info NOW if interrupts are disabled.
         // Note this would have followed the path of "Soft WDT reset".
-        // TODO: Feed the hardware WDT so we can get through this process.
         struct rst_info rst_info;
         memset(&rst_info, 0, sizeof(rst_info));
         rst_info.reason = REASON_SOFT_WDT_RST; // Fake it

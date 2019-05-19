@@ -22,7 +22,7 @@ Copyright (c) 2019 Michael Hightgower. All rights reserved.
 #include "Arduino.h"
 #include "Esp.h"
 #include "core_esp8266_nested_lock.h"
-#if 1
+#if 0
 #include <assert.h>
 #else
 #define assert(...) do {} while(false)
@@ -122,7 +122,7 @@ size_t get_nested_lock_max_elapse_time_us(void) {
 #endif
 
 void nested_lock_entry(void) {
-#if 1
+#if 0
     uint32_t savedPS = xt_rsr_ps();
     unsigned char intLevel = (unsigned char)0x0F & (unsigned char)savedPS;
     if (NESTED_LOCK_INTLEVEL > intLevel)
@@ -176,7 +176,7 @@ void nested_lock_entry(void) {
 void nested_lock_exit(void) {
     _nested_lock_dx.depth -= 1U;
     size_t depth = _nested_lock_dx.depth;
-#if DEBUG_NESTED_LOCK_INFO == 0
+#if 1 //DEBUG_NESTED_LOCK_INFO == 0
     if (~(size_t)0 == depth) {
         // Too many exit calls(), Attempt recovery by Clamping value
         _nested_lock_dx.depth = 0U;
@@ -186,7 +186,7 @@ void nested_lock_exit(void) {
     if (NESTED_LOCK_SAVEDPS_LIMIT > depth)
         xt_wsr_ps(_nested_lock_dx.saved_ps[depth]);
 #else
-    assert(~(size_t)0 != depth);
+    assert((~(size_t)0) != depth);
 
     if (NESTED_LOCK_SAVEDPS_LIMIT > depth) {
         xt_wsr_ps(_nested_lock_dx.saved_ps[depth]);
