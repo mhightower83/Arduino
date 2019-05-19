@@ -32,6 +32,7 @@
 #include "pgmspace.h"
 #include "gdb_hooks.h"
 #include "StackThunk.h"
+#include "Esp.h"
 #ifndef xt_rsr_ps
 #define xt_rsr_ps()  (__extension__({uint32_t state; __asm__ __volatile__("rsr.ps %0;" : "=a" (state)); state;}))
 #endif
@@ -72,26 +73,46 @@ extern void __custom_crash_callback( struct rst_info * rst_info, uint32_t stack,
 
 extern void custom_crash_callback( struct rst_info * rst_info, uint32_t stack, uint32_t stack_end ) __attribute__ ((weak, alias("__custom_crash_callback")));
 
-
+static bool install_putc1 = false;
+#define WDT_TIME_TO_FEED (500000*clockCyclesPerMicrosecond())
 // Prints need to use our library function to allow for file and function
 // to be safely accessed from flash. This function encapsulates snprintf()
-// [which by definition will 0-terminate] and dumping to the UART
-static void ets_printf_P(const char *str, ...) {
+// [which by definition will 0-terminate, if the buffer is big enough] and
+// dumping to the UART.
+void core_postmortem_printf(const char *str, ...) {
+    // if (install_putc1) {
+    //     // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
+    //     ets_install_putc1((void *)&uart_write_char_d);
+    //     install_putc1 = false;
+    // }
     char destStr[160];
+    int length;
+    // uint32_t wdt_last_feeding = ESP.getCycleCount() - WDT_TIME_TO_FEED;
     char *c = destStr;
     va_list argPtr;
     va_start(argPtr, str);
-    vsnprintf(destStr, sizeof(destStr), str, argPtr);
+    length = vsnprintf(destStr, sizeof(destStr), str, argPtr);
     va_end(argPtr);
+    // if ((int)sizeof(destStr) <= length) // Buffer too small?
+    //     destStr[sizeof(destStr) - 1] = '\0';
     while (*c) {
         ets_putc(*(c++));
+        // // If we are printing a lot, make sure we get to finish.
+        // if (ESP.getCycleCount() - wdt_last_feeding >= WDT_TIME_TO_FEED) {
+        //     system_soft_wdt_feed();
+        //     system_soft_wdt_stop(); // Previous testing needed this repeated after feeding
+        //     wdt_last_feeding = ESP.getCycleCount();
+        // }
     }
+}
+#define ets_printf_P core_postmortem_printf
+
+void core_postmortem_printf_init(void) {
+  // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
+  ets_install_putc1((void *)&uart_write_char_d);
 }
 
 static void crashReport(struct rst_info *rst_info, uint32_t sp_dump, uint32_t offset) {
-
-    // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
-    ets_install_putc1((void *)&uart_write_char_d);
 
     if (PS_INVALID_VALUE != s_panic.ps_reg)
         ets_printf_P(PSTR("\nPS Register=0x%08X, Interrupts %S\n"), s_panic.ps_reg, (s_panic.ps_reg & 0x0FU)?PSTR("disabled"):PSTR("enabled"));
