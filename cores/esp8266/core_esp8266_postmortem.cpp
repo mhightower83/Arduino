@@ -63,7 +63,7 @@ static void print_stack(uint32_t start, uint32_t end);
 extern void *umm_last_fail_alloc_addr;
 extern int umm_last_fail_alloc_size;
 
-static void raise_exception() __attribute__((noreturn));
+static void raise_exception(bool early_reporting) __attribute__((noreturn));
 
 extern void __custom_crash_callback( struct rst_info * rst_info, uint32_t stack, uint32_t stack_end ) {
     (void) rst_info;
@@ -77,38 +77,44 @@ static bool install_putc1 = true;
 #define WDT_TIME_TO_FEED (500000*clockCyclesPerMicrosecond())
 // Prints need to use our library function to allow for file and function
 // to be safely accessed from flash. This function encapsulates snprintf()
-// [which by definition will 0-terminate, if the buffer is big enough] and
-// dumping to the UART.
-void core_postmortem_printf(const char *str, ...) {
+// [which by definition will 0-terminate] and dumping to the UART.
+int postmortem_printf(const char *str, ...) {
     if (install_putc1) {
         // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
         ets_install_putc1((void *)&uart_write_char_d);
         install_putc1 = false;
     }
-    char destStr[160];
-    int length;
-    uint32_t wdt_last_feeding = ESP.getCycleCount() - WDT_TIME_TO_FEED;
-    char *c = destStr;
+    // char destStr[160];
     va_list argPtr;
     va_start(argPtr, str);
-    length = vsnprintf(destStr, sizeof(destStr), str, argPtr);
+    int destStrSz = vsnprintf(NULL, 0, str, argPtr);
     va_end(argPtr);
-    if ((int)sizeof(destStr) <= length) // Buffer too small?
-        destStr[sizeof(destStr) - 1] = '\0';
+    if (0 >= destStrSz) {
+        return destStrSz;
+    }
+
+    char destStr[destStrSz + 1];
+    char *c = destStr;
+    va_start(argPtr, str);
+    vsnprintf(destStr, destStrSz + 1, str, argPtr);
+    va_end(argPtr);
+
+    uint32_t wdt_last_feeding = ESP.getCycleCount() - WDT_TIME_TO_FEED;
     while (*c) {
-        ets_putc(*(c++));
         // If we are printing a lot, make sure we get to finish.
         if ((ESP.getCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {
             system_soft_wdt_feed();
             system_soft_wdt_stop(); // Previous testing needed this repeated after feeding
             wdt_last_feeding = ESP.getCycleCount();
         }
+        ets_putc(*(c++));
     }
     system_soft_wdt_restart();
+    return destStrSz;
 }
-#define ets_printf_P core_postmortem_printf
+#define ets_printf_P postmortem_printf
 
-static void crashReport(struct rst_info *rst_info, uint32_t sp_dump, uint32_t offset) {
+static void crashReport(struct rst_info *rst_info, uint32_t sp_dump, uint32_t offset, bool crash_dump) {
 
     install_putc1 = true;
 
@@ -168,10 +174,11 @@ static void crashReport(struct rst_info *rst_info, uint32_t sp_dump, uint32_t of
 
     // Use cap-X formatting to ensure the standard EspExceptionDecoder doesn't match the address
     if (umm_last_fail_alloc_addr) {
-      ets_printf_P(PSTR("\nlast failed alloc call: %08X(%d)\n"), (uint32_t)umm_last_fail_alloc_addr, umm_last_fail_alloc_size);
+        ets_printf_P(PSTR("\nlast failed alloc call: %08X(%d)\n"), (uint32_t)umm_last_fail_alloc_addr, umm_last_fail_alloc_size);
     }
 
-    custom_crash_callback( rst_info, sp_dump + offset, stack_end );
+    if (crash_dump)
+        custom_crash_callback( rst_info, sp_dump + offset, stack_end );
 }
 
 void __wrap_system_restart_local() {
@@ -184,7 +191,7 @@ void __wrap_system_restart_local() {
            Trigger an exception to break into GDB.
            TODO: check why gdb_do_break() or asm("break.n 0") do not
            break into GDB here. */
-        raise_exception();  //?? strange - we may be here from a previous call to raise_exception()
+        raise_exception(false);
     }
 
     struct rst_info rst_info;
@@ -212,7 +219,7 @@ void __wrap_system_restart_local() {
         // ?? __real_system_restart_local();
     }
 
-    crashReport(&rst_info, sp_dump, offset);
+    crashReport(&rst_info, sp_dump, offset, true);
 
     ets_delay_us(10000);
     __real_system_restart_local();
@@ -258,40 +265,46 @@ static void uart1_write_char_d(char c) {
 // raise_exception() which then finishes with a "syscall". After a delay, we
 // are then called back at __wrap_system_restart_local with a soft wdt reason.
 //  * Why not just print the results straight away?
-//  * What is "syscall" doing for us?
-//  * Where is the code for system_restart_local?
-//
-static void raise_exception() {
+//  * What does "syscall" doing for us?
+//  * Where is the code/info for system_restart_local?
+//  * After "syscall", when we are called back at __wrap_system_restart_local
+//    the reason is "Soft WDT" and interrupts are now disabled, PS is 0x023.
+//    Thus, guaranteeing the "Hardware WDT" will follow.
+//  * If "syscall" is done with interrupts disabled, we only get a
+//    "Hardware WDT" and are no callback at __wrap_system_restart_local.
+//  * Also, if before "syscall" a call to system_soft_wdt_stop() was done w/o
+//    a followup with system_soft_wdt_restarted (), a "Hardware WDT" will
+//    follow.
+static void raise_exception(bool early_reporting) {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
     s_panic.ps_reg = xt_rsr_ps();
-    if (0 != (s_panic.ps_reg & 0x0FU)) {
-        // Note, when "syscall" is called with interrupts disable or
-        // a system_soft_wdt_stop() has been called and the wdt was not
-        // restarted then a hardware wdt reset will follow. We will not
-        // get a callback.
+    if (early_reporting) { //0 != (s_panic.ps_reg & 0x0FU)) {
         // Need to generate debug info NOW if interrupts are disabled.
         // Note this would have followed the path of "Soft WDT reset".
         struct rst_info rst_info;
         memset(&rst_info, 0, sizeof(rst_info));
         rst_info.reason = REASON_SOFT_WDT_RST; // Fake it
-        crashReport(&rst_info, sp_dump, 0);
+        crashReport(&rst_info, sp_dump, 0, true);
+        ets_delay_us(10000);
+        // This path appears to cause bootloader to report the restart reason
+        // as REASON_EXCEPTION_RST.
+        xt_rsil(3);
+        // __real_system_restart_local();
     }
 
     __asm__ __volatile__ ("syscall");
-    // Note, observed that when we get called back at __wrap_system_restart_local()
-    // PS is 0x023.
     while (1); // never reached, needed to satisfy "noreturn" attribute
 }
 
 void abort() {
     s_panic.abort_called = true;
-    raise_exception();
+    raise_exception(true);
 }
 
 void __unhandled_exception(const char *str) {
     s_panic.unhandled_exception = str;
-    raise_exception();
+    raise_exception(true);
 }
 
 void __assert_func(const char *file, int line, const char *func, const char *what) {
@@ -300,7 +313,7 @@ void __assert_func(const char *file, int line, const char *func, const char *wha
     s_panic.func = func;
     s_panic.what = what;
     gdb_do_break();     /* if GDB is not present, this is a no-op */
-    raise_exception();
+    raise_exception(true);
 }
 
 void __panic_func(const char* file, int line, const char* func) {
@@ -309,7 +322,17 @@ void __panic_func(const char* file, int line, const char* func) {
     s_panic.func = func;
     s_panic.what = 0;
     gdb_do_break();     /* if GDB is not present, this is a no-op */
-    raise_exception();
+    raise_exception(true);
 }
 
+// Typical call:  postmortem_inflight_stack_dump(xt_rsr_ps());
+void postmortem_inflight_stack_dump(uint32_t ps_reg) {
+    register uint32_t sp asm("a1");
+    uint32_t sp_dump = sp;
+    s_panic.ps_reg = ps_reg; 
+    struct rst_info rst_info;
+    memset(&rst_info, 0, sizeof(rst_info));
+    rst_info.reason = REASON_SOFT_WDT_RST; // Fake it
+    crashReport(&rst_info, sp_dump, 0, false);
+}
 };

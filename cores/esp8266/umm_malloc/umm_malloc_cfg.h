@@ -7,8 +7,6 @@
 
 #include <debug.h>
 #include "core_esp8266_nested_lock.h"
-
-
 #ifdef __cplusplus
 extern "C" {
 #endif

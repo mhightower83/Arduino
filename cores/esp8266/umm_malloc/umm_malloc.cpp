@@ -494,8 +494,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <pgmspace.h>
-#include <HardwareSerial.h>
+
+//D #include <HardwareSerial.h>
 #include "umm_malloc.h"
+
 #include "umm_malloc_cfg.h"   /* user-dependent */
 
 extern "C" {
@@ -503,7 +505,7 @@ extern "C" {
 // Printing from the malloc routines is tricky. Since a lot of library calls
 // will want to do malloc. This approach appears to work almost all the time.
 #if defined(DEBUG_ESP_PORT) && ( defined(DEBUG_ESP_CORE) || defined(DEBUG_ESP_OOM) )
-void core_postmortem_printf(const char *str, ...);
+int core_postmortem_printf(const char *str, ...) __attribute__((format(printf, 1, 2)));
 #define printf(fmt, ...) do { core_postmortem_printf( PSTR(fmt), ##__VA_ARGS__) } while (false)
 #else
 #define printf(fmt, ...) do { } while (false)
@@ -1401,6 +1403,7 @@ static void *_umm_malloc( size_t size ) {
   if (umm_heap == NULL) {
     umm_init();
   }
+
   /*
    * the very first thing we do is figure out if we're being asked to allocate
    * a size of 0 - and if we are we'll simply return a null pointer. if not

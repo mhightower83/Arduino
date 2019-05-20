@@ -22,25 +22,34 @@ Copyright (c) 2019 Michael Hightgower. All rights reserved.
 #include "Arduino.h"
 #include "Esp.h"
 #include "core_esp8266_nested_lock.h"
-#if 0
-#include <assert.h>
-#else
-#define assert(...) do {} while(false)
+
+
+#ifndef MAX_SIZET
+#define MAX_SIZET (~(size_t)0)
 #endif
-//D
-//D // #include <interrupts.h>
-//D #ifndef __STRINGIFY
-//D #define __STRINGIFY(a) #a
-//D #endif
-//D #ifndef xt_rsil
-//D #define xt_rsil(level) (__extension__({uint32_t state; __asm__ __volatile__("rsil %0," __STRINGIFY(level) : "=a" (state)); state;}))
-//D #endif
-//D #ifndef xt_wsr_ps
-//D #define xt_wsr_ps(state)  __asm__ __volatile__("wsr %0,ps; isync" :: "a" (state) : "memory")
-//D #endif
+
 #ifndef xt_rsr_ps
 #define xt_rsr_ps()  (__extension__({uint32_t state; __asm__ __volatile__("rsr.ps %0;" : "=a" (state)); state;}))
 #endif
+
+extern "C" {
+int postmortem_printf(const char *str, ...) __attribute__((format(printf, 1, 2)));
+void postmortem_inflight_stack_dump(uint32_t ps);
+};
+
+#define DEBUG_MSG_PRINTF_PM(fmt, ...) postmortem_printf( PSTR(fmt), ##__VA_ARGS__)
+#define DEBUG_LOG_LOCATION() DEBUG_MSG_PRINTF_PM("Debug Log Location: %S:%d %S", PSTR(__FILE__), __LINE__, __func__)
+#define ASSERT(exp) if (!(exp)) { DEBUG_LOG_LOCATION(); DEBUG_MSG_PRINTF_PM("\nAssert failed: %S\n", PSTR(#exp)); }
+
+// #include <assert.h>
+
+// #if !defined(DEBUG_ESP_PORT)
+// #undef ASSERT
+// #define ASSERT(...) do {} while(false)
+// #elif defined(DEBUG_ASSERT_FAIL)
+// #undef ASSERT
+// #define ASSERT assert
+// #endif
 
 extern "C" {
 
@@ -110,6 +119,12 @@ size_t get_nested_lock_max_elapse_time_us(void) {
     return _nested_lock_dx.max_elapse_cycle_count/clockCyclesPerMicrosecond();
 }
 
+inline void printReport(void) {
+  DEBUG_MSG_PRINTF_PM("MAX Nested lock depth: %u\n", get_nested_lock_depth_max());
+  DEBUG_MSG_PRINTF_PM("MAX Nested lock held time: %u us\n", get_nested_lock_max_elapse_time_us());
+  DEBUG_MSG_PRINTF_PM("MAX Nested lock INTLEVEL:  %u\n", get_nested_lock_intlevel_max());
+  DEBUG_MSG_PRINTF_PM("Current INTLEVEL: %u\n", xt_rsr_ps() & 0x0FU);
+}
 //D inline uint32_t getCycleCount() { // Copied from Esp.h
 //D     uint32_t ccount;
 //D     __asm__ __volatile__("esync; rsr %0,ccount":"=a" (ccount));
@@ -122,20 +137,10 @@ size_t get_nested_lock_max_elapse_time_us(void) {
 #endif
 
 void nested_lock_entry(void) {
-#if 0
     uint32_t savedPS = xt_rsr_ps();
     unsigned char intLevel = (unsigned char)0x0F & (unsigned char)savedPS;
     if (NESTED_LOCK_INTLEVEL > intLevel)
         xt_rsil(NESTED_LOCK_INTLEVEL);
-#else
-    uint32_t savedPS = xt_rsil(MAX_INTLEVEL);
-    unsigned char intLevel = (unsigned char)0x0F & (unsigned char)savedPS;
-    if (NESTED_LOCK_INTLEVEL > intLevel) {
-        xt_rsil(NESTED_LOCK_INTLEVEL);
-    } else {
-        xt_wsr_ps(savedPS);
-    }
-#endif
 
 #if !defined(DEBUG_NESTED_LOCK_INFO) || DEBUG_NESTED_LOCK_INFO == 0
     size_t depth = _nested_lock_dx.depth;
@@ -149,8 +154,7 @@ void nested_lock_entry(void) {
         // state that long anyway.
     }
     depth += 1;
-    assert(MAX_NESTED_LOCK_DEPTH > depth);
-
+    ASSERT(MAX_NESTED_LOCK_DEPTH > depth);
     _nested_lock_dx.depth = depth;
 #else
     if (intLevel > _nested_lock_dx.max_intlevel)
@@ -169,36 +173,61 @@ void nested_lock_entry(void) {
     if (depth > _nested_lock_dx.max_depth)
         _nested_lock_dx.max_depth = depth;
 
-    assert(MAX_NESTED_LOCK_DEPTH > depth);
+    ASSERT(MAX_NESTED_LOCK_DEPTH > depth);
 #endif
 }
+
+#if DEBUG_NESTED_LOCK_INFO
+int nested_lock_dbg_print_level = 0;
+int set_nested_lock_dbg_print(int level) {
+    int previous = nested_lock_dbg_print_level;
+    nested_lock_dbg_print_level = level;
+    return previous;
+}
+
+void nested_lock_info_reset(void) {
+  _nested_lock_dx.max_depth = 0U;
+  _nested_lock_dx.max_intlevel = 0U;
+  _nested_lock_dx.max_elapse_cycle_count = 0U;
+
+}
+#endif
 
 void nested_lock_exit(void) {
     _nested_lock_dx.depth -= 1U;
     size_t depth = _nested_lock_dx.depth;
-#if 1 //DEBUG_NESTED_LOCK_INFO == 0
-    if (~(size_t)0 == depth) {
+
+    if (MAX_SIZET == depth) {
+        ASSERT(MAX_SIZET != depth);
         // Too many exit calls(), Attempt recovery by Clamping value
         _nested_lock_dx.depth = 0U;
         return;
     }
 
-    if (NESTED_LOCK_SAVEDPS_LIMIT > depth)
-        xt_wsr_ps(_nested_lock_dx.saved_ps[depth]);
-#else
-    assert((~(size_t)0) != depth);
-
     if (NESTED_LOCK_SAVEDPS_LIMIT > depth) {
-        xt_wsr_ps(_nested_lock_dx.saved_ps[depth]);
+#if DEBUG_NESTED_LOCK_INFO
         if (0 == depth) {
             uint32_t elapse_cycle_count = ESP.getCycleCount() - _nested_lock_dx.start_cycle_count;
             if (elapse_cycle_count > _nested_lock_dx.max_elapse_cycle_count) {
                 _nested_lock_dx.max_elapse_cycle_count = elapse_cycle_count;
-                assert(elapse_cycle_count < MAX_INT_DISABLED_CYCLE_COUNT);
+                if (1 <= nested_lock_dbg_print_level &&
+                    elapse_cycle_count >= MAX_INT_DISABLED_CYCLE_COUNT) {
+                    printReport();
+                    DEBUG_MSG_PRINTF_PM("Current Nested lock time: %u us > %u us.\n",
+                        elapse_cycle_count/clockCyclesPerMicrosecond(),
+                        MAX_INT_DISABLED_CYCLE_COUNT/clockCyclesPerMicrosecond());
+                    ASSERT(elapse_cycle_count < MAX_INT_DISABLED_CYCLE_COUNT);
+                }
+                if (2 <= nested_lock_dbg_print_level &&
+                    elapse_cycle_count >= (MAX_INT_DISABLED_CYCLE_COUNT * 2)) {
+                    postmortem_inflight_stack_dump(_nested_lock_dx.saved_ps[depth]);
+                    // do_once = false;
+                }
             }
         }
-    }
 #endif
+        xt_wsr_ps(_nested_lock_dx.saved_ps[depth]);
+    }
 }
 
 #elif UMM_CRITICAL_METHOD == 2
@@ -269,6 +298,7 @@ unsigned char get_nested_lock_intlevel_max(void) { return esp_lock_stats.max_int
 #endif
 
 /*
+  This is what the SDK is doing
 
 00000f74 <ets_intr_lock>:
     f74:   006320      rsil    a2, 3

@@ -59,10 +59,15 @@ extern "C" {
 size_t get_nested_lock_depth(void);
 size_t get_nested_lock_depth_max(void);
 unsigned char get_nested_lock_intlevel_max(void);
+size_t get_nested_lock_max_elapse_time_us(void);
+int set_nested_lock_dbg_print(int level);
+void nested_lock_info_reset(void);
 #else
 #define get_nested_lock_depth() (__extension__({ (size_t)0U; }))
 #define get_nested_lock_depth_max() (__extension__({ (size_t)0U; }))
 #define get_nested_lock_intlevel_max() (__extension__({ (unsigned char)0U; }))
+#define get_nested_lock_max_elapse_time_us() (__extension__({ (unsigned char)0U; }))
+#define set_nested_lock_dbg_print() (__extension__({ (unsigned char)0U; }))
 #endif
 
 #if UMM_CRITICAL_METHOD == 1
