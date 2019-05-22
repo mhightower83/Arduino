@@ -504,9 +504,9 @@ extern "C" {
 
 // Printing from the malloc routines is tricky. Since a lot of library calls
 // will want to do malloc. This approach appears to work almost all the time.
-#if defined(DEBUG_ESP_PORT) && ( defined(DEBUG_ESP_CORE) || defined(DEBUG_ESP_OOM) )
-int core_postmortem_printf(const char *str, ...) __attribute__((format(printf, 1, 2)));
-#define printf(fmt, ...) do { core_postmortem_printf( PSTR(fmt), ##__VA_ARGS__) } while (false)
+#if 1 //defined(DEBUG_ESP_PORT) && ( defined(DEBUG_ESP_CORE) || defined(DEBUG_ESP_OOM) )
+int postmortem_printf(const char *str, ...) __attribute__((format(printf, 1, 2)));
+#define printf(fmt, ...) do { postmortem_printf( PSTR(fmt), ##__VA_ARGS__); } while (false)
 #else
 #define printf(fmt, ...) do { } while (false)
 #endif
@@ -1028,7 +1028,7 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
   if (umm_heap == NULL) {
       umm_init();
   }
-
+//D printf("\nWe are here .... PS=0x%03X\n", xt_rsr_ps());
   /* Protect the critical section... */
   UMM_CRITICAL_ENTRY();
 
@@ -1092,6 +1092,7 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
 
         /* Release the critical section... */
         UMM_CRITICAL_EXIT();
+//D printf("\nWe are leaving now .... PS=0x%03X, level=%u\n", xt_rsr_ps(), get_nested_lock_depth());
 
         return( ptr );
       }
@@ -1146,7 +1147,7 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
 
   /* Release the critical section... */
   UMM_CRITICAL_EXIT();
-
+//D printf("\nWe are leaving now .... PS=0x%03X, level=%u\n", xt_rsr_ps(), get_nested_lock_depth());
   return( NULL );
 }
 

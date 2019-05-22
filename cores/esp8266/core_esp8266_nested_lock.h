@@ -22,6 +22,10 @@
 #ifndef _CORE_ESP8266_NESTED_LOCK
 #define _CORE_ESP8266_NESTED_LOCK
 
+#ifndef xt_rsr_ps
+#define xt_rsr_ps()  (__extension__({uint32_t state; __asm__ __volatile__("rsr.ps %0; esync" : "=a" (state)); state;}))
+inline unsigned char get_xt_intlevel(void) { return (unsigned char)xt_rsr_ps() & (unsigned char)0x0FU; }
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -56,18 +60,20 @@ extern "C" {
   */
 
 #if DEBUG_NESTED_LOCK_INFO
-size_t get_nested_lock_depth(void);
-size_t get_nested_lock_depth_max(void);
-unsigned char get_nested_lock_intlevel_max(void);
-size_t get_nested_lock_max_elapse_time_us(void);
-int set_nested_lock_dbg_print(int level);
-void nested_lock_info_reset(void);
+size_t ICACHE_RAM_ATTR get_nested_lock_depth(void);
+size_t ICACHE_RAM_ATTR get_nested_lock_depth_max(void);
+unsigned char ICACHE_RAM_ATTR get_nested_lock_intlevel_max(void);
+size_t ICACHE_RAM_ATTR get_nested_lock_max_elapse_time_us(void);
+int ICACHE_RAM_ATTR set_nested_lock_dbg_print(int level);
+void ICACHE_RAM_ATTR nested_lock_info_reset(void);
+void ICACHE_RAM_ATTR nested_lock_info_print_report(void);
 #else
 #define get_nested_lock_depth() (__extension__({ (size_t)0U; }))
 #define get_nested_lock_depth_max() (__extension__({ (size_t)0U; }))
 #define get_nested_lock_intlevel_max() (__extension__({ (unsigned char)0U; }))
 #define get_nested_lock_max_elapse_time_us() (__extension__({ (unsigned char)0U; }))
-#define set_nested_lock_dbg_print() (__extension__({ (unsigned char)0U; }))
+#define set_nested_lock_dbg_print(a) (__extension__({ (unsigned char)0U; }))
+#define nested_lock_info_print_report() (__extension__({ (unsigned char)0U; }))
 #endif
 
 #if UMM_CRITICAL_METHOD == 1
@@ -105,8 +111,8 @@ void ICACHE_RAM_ATTR __wrap_ets_intr_lock(void);
 void ICACHE_RAM_ATTR __wrap_ets_intr_unlock(void);
 #endif
 
-#endif // #ifndef _CORE_ESP8266_NESTED_LOCK
-
 #ifdef __cplusplus
 }
 #endif
+
+#endif // #ifndef _CORE_ESP8266_NESTED_LOCK

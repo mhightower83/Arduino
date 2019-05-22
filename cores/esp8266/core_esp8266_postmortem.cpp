@@ -39,6 +39,27 @@
 
 extern "C" {
 
+inline bool interlocked_exchange_bool(volatile bool *target, bool value) {
+/*
+   Assembles to:
+
+   rsil    a5, 15
+   memw
+   l32i.n  a4, a2, 0
+   memw
+   s32i.n  a3, a2, 0
+   wsr     a5, ps
+   isync
+   mov.n   a2, a4
+   ret.n
+ */
+
+  uint32_t ps = xt_rsil(15);
+  bool oldValue = *target;
+  *target = value;
+  xt_wsr_ps(ps);
+  return oldValue;
+}
 extern void __real_system_restart_local();
 
 #define PS_INVALID_VALUE (0x80000000U)
@@ -79,6 +100,10 @@ static bool install_putc1 = true;
 // to be safely accessed from flash. This function encapsulates snprintf()
 // [which by definition will 0-terminate] and dumping to the UART.
 int postmortem_printf(const char *str, ...) {
+    static volatile bool busy = false;
+    if(interlocked_exchange_bool(&busy, true))
+        return -1;
+
     if (install_putc1) {
         // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
         ets_install_putc1((void *)&uart_write_char_d);
@@ -90,6 +115,7 @@ int postmortem_printf(const char *str, ...) {
     int destStrSz = vsnprintf(NULL, 0, str, argPtr);
     va_end(argPtr);
     if (0 >= destStrSz) {
+        interlocked_exchange_bool(&busy, false);
         return destStrSz;
     }
 
@@ -99,27 +125,30 @@ int postmortem_printf(const char *str, ...) {
     vsnprintf(destStr, destStrSz + 1, str, argPtr);
     va_end(argPtr);
 
+    system_soft_wdt_stop();
     uint32_t wdt_last_feeding = ESP.getCycleCount() - WDT_TIME_TO_FEED;
     while (*c) {
         // If we are printing a lot, make sure we get to finish.
         if ((ESP.getCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {
             system_soft_wdt_feed();
-            system_soft_wdt_stop(); // Previous testing needed this repeated after feeding
+            //? Do we need this here?  system_soft_wdt_stop(); // Previous testing needed this repeated after feeding
             wdt_last_feeding = ESP.getCycleCount();
         }
         ets_putc(*(c++));
     }
     system_soft_wdt_restart();
+    interlocked_exchange_bool(&busy, false);
     return destStrSz;
 }
 #define ets_printf_P postmortem_printf
 
-static void crashReport(struct rst_info *rst_info, uint32_t sp_dump, uint32_t offset, bool crash_dump) {
+static void crashReport(struct rst_info *rst_info, uint32_t sp_dump,
+                        uint32_t offset, bool custom_crash_cb_enabled) {
 
     install_putc1 = true;
 
     if (PS_INVALID_VALUE != s_panic.ps_reg)
-        ets_printf_P(PSTR("\nPS Register=0x%08X, Interrupts %S\n"), s_panic.ps_reg, (s_panic.ps_reg & 0x0FU)?PSTR("disabled"):PSTR("enabled"));
+        ets_printf_P(PSTR("\nPS Register=0x%03X, Interrupts %S\n"), s_panic.ps_reg, (s_panic.ps_reg & 0x0FU)?PSTR("disabled"):PSTR("enabled"));
     if (s_panic.line) {
         ets_printf_P(PSTR("\nPanic %S:%d %S"), s_panic.file, s_panic.line, s_panic.func);
         if (s_panic.what) {
@@ -177,7 +206,7 @@ static void crashReport(struct rst_info *rst_info, uint32_t sp_dump, uint32_t of
         ets_printf_P(PSTR("\nlast failed alloc call: %08X(%d)\n"), (uint32_t)umm_last_fail_alloc_addr, umm_last_fail_alloc_size);
     }
 
-    if (crash_dump)
+    if (custom_crash_cb_enabled)
         custom_crash_callback( rst_info, sp_dump + offset, stack_end );
 }
 
@@ -325,14 +354,15 @@ void __panic_func(const char* file, int line, const char* func) {
     raise_exception(true);
 }
 
-// Typical call:  postmortem_inflight_stack_dump(xt_rsr_ps());
-void postmortem_inflight_stack_dump(uint32_t ps_reg) {
+// Typical call:  postmortem_inflight_stack_trace(xt_rsr_ps());
+void postmortem_inflight_stack_trace(uint32_t ps_reg) {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
-    s_panic.ps_reg = ps_reg; 
+    s_panic.ps_reg = ps_reg;
     struct rst_info rst_info;
     memset(&rst_info, 0, sizeof(rst_info));
     rst_info.reason = REASON_SOFT_WDT_RST; // Fake it
+    postmortem_printf(PSTR("\nPostmortem Infligth Stack Trace\n"));
     crashReport(&rst_info, sp_dump, 0, false);
 }
 };

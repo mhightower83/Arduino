@@ -23,18 +23,13 @@ Copyright (c) 2019 Michael Hightgower. All rights reserved.
 #include "Esp.h"
 #include "core_esp8266_nested_lock.h"
 
-
-#ifndef MAX_SIZET
-#define MAX_SIZET (~(size_t)0)
-#endif
-
-#ifndef xt_rsr_ps
-#define xt_rsr_ps()  (__extension__({uint32_t state; __asm__ __volatile__("rsr.ps %0;" : "=a" (state)); state;}))
+#ifndef SIZE_MAX
+#define SIZE_MAX (~(size_t)0)
 #endif
 
 extern "C" {
 int postmortem_printf(const char *str, ...) __attribute__((format(printf, 1, 2)));
-void postmortem_inflight_stack_dump(uint32_t ps);
+void postmortem_inflight_stack_trace(uint32_t ps);
 };
 
 #define DEBUG_MSG_PRINTF_PM(fmt, ...) postmortem_printf( PSTR(fmt), ##__VA_ARGS__)
@@ -53,7 +48,22 @@ void postmortem_inflight_stack_dump(uint32_t ps);
 
 extern "C" {
 
-#if UMM_CRITICAL_METHOD == 1
+#if   UMM_CRITICAL_METHOD == 1
+#define NESTED_LOCK_SAVEDPS_LIMIT  4
+#if 0 //DEBUG_NESTED_LOCK_INFO
+#define MAX_NESTED_LOCK_DEPTH  NESTED_LOCK_SAVEDPS_LIMIT
+#else
+#define MAX_NESTED_LOCK_DEPTH (15)
+#endif
+
+#elif UMM_CRITICAL_METHOD == 2
+#define NESTED_LOCK_SAVEDPS_LIMIT  1
+#define MAX_NESTED_LOCK_DEPTH (15)
+#endif
+
+
+#if (UMM_CRITICAL_METHOD == 1) || (UMM_CRITICAL_METHOD == 2)
+
  /*
   * A nested counted lock -
   *
@@ -70,9 +80,7 @@ extern "C" {
   * matching nested_lock_entry.
   *
   */
-constexpr size_t NESTED_LOCK_SAVEDPS_LIMIT =  8U;  // two is the minimum we can get away with
-
-static struct _DLX_NESTED_LOCK {
+static volatile struct _DLX_NESTED_LOCK {
     uint32_t saved_ps[NESTED_LOCK_SAVEDPS_LIMIT];
     size_t depth;
 #if DEBUG_NESTED_LOCK_INFO
@@ -89,11 +97,6 @@ static struct _DLX_NESTED_LOCK {
 
 #if !defined(MAX_INT_DISABLED_TIME_US)
 #define MAX_INT_DISABLED_TIME_US 10
-#endif
-
-#define MAX_NESTED_LOCK_DEPTH (15)
-#if !defined(MAX_NESTED_LOCK_DEPTH)
-#define MAX_NESTED_LOCK_DEPTH  NESTED_LOCK_SAVEDPS_LIMIT
 #endif
 
 #define MAX_INT_DISABLED_CYCLE_COUNT \
@@ -119,21 +122,31 @@ size_t get_nested_lock_max_elapse_time_us(void) {
     return _nested_lock_dx.max_elapse_cycle_count/clockCyclesPerMicrosecond();
 }
 
-inline void printReport(void) {
-  DEBUG_MSG_PRINTF_PM("MAX Nested lock depth: %u\n", get_nested_lock_depth_max());
-  DEBUG_MSG_PRINTF_PM("MAX Nested lock held time: %u us\n", get_nested_lock_max_elapse_time_us());
-  DEBUG_MSG_PRINTF_PM("MAX Nested lock INTLEVEL:  %u\n", get_nested_lock_intlevel_max());
-  DEBUG_MSG_PRINTF_PM("Current INTLEVEL: %u\n", xt_rsr_ps() & 0x0FU);
+int nested_lock_dbg_print_level = 0;
+int set_nested_lock_dbg_print(int level) {
+    int previous = nested_lock_dbg_print_level;
+    nested_lock_dbg_print_level = level;
+    return previous;
+}
+
+void nested_lock_info_reset(void) {
+    _nested_lock_dx.max_depth = 0U;
+    _nested_lock_dx.max_intlevel = 0U;
+    _nested_lock_dx.max_elapse_cycle_count = 0U;
+}
+
+void nested_lock_info_print_report(void) {
+    DEBUG_MSG_PRINTF_PM("Current Nested lock depth: %u\n", get_nested_lock_depth());
+    DEBUG_MSG_PRINTF_PM("MAX Nested lock depth: %u\n", get_nested_lock_depth_max());
+    DEBUG_MSG_PRINTF_PM("MAX Nested lock held time: %u us\n", get_nested_lock_max_elapse_time_us());
+    DEBUG_MSG_PRINTF_PM("MAX Nested lock INTLEVEL:  %u\n", get_nested_lock_intlevel_max());
+    DEBUG_MSG_PRINTF_PM("Current INTLEVEL: %u\n", xt_rsr_ps() & 0x0FU);
 }
 //D inline uint32_t getCycleCount() { // Copied from Esp.h
 //D     uint32_t ccount;
 //D     __asm__ __volatile__("esync; rsr %0,ccount":"=a" (ccount));
 //D     return ccount;
 //D }
-#endif
-
-#if !defined(MAX_NESTED_LOCK_DEPTH)
-#define MAX_NESTED_LOCK_DEPTH  (NESTED_LOCK_SAVEDPS_LIMIT * 2)
 #endif
 
 void nested_lock_entry(void) {
@@ -145,6 +158,7 @@ void nested_lock_entry(void) {
 #if !defined(DEBUG_NESTED_LOCK_INFO) || DEBUG_NESTED_LOCK_INFO == 0
     size_t depth = _nested_lock_dx.depth;
     if (NESTED_LOCK_SAVEDPS_LIMIT > depth) {
+      ASSERT(depth == 0);
         _nested_lock_dx.saved_ps[depth] = savedPS;
         // If we have run out of room. Stop storing PS and on the Exit side
         // don't take values off until we pass below NESTED_LOCK_SAVEDPS_LIMIT.
@@ -177,28 +191,13 @@ void nested_lock_entry(void) {
 #endif
 }
 
-#if DEBUG_NESTED_LOCK_INFO
-int nested_lock_dbg_print_level = 0;
-int set_nested_lock_dbg_print(int level) {
-    int previous = nested_lock_dbg_print_level;
-    nested_lock_dbg_print_level = level;
-    return previous;
-}
-
-void nested_lock_info_reset(void) {
-  _nested_lock_dx.max_depth = 0U;
-  _nested_lock_dx.max_intlevel = 0U;
-  _nested_lock_dx.max_elapse_cycle_count = 0U;
-
-}
-#endif
-
 void nested_lock_exit(void) {
-    _nested_lock_dx.depth -= 1U;
-    size_t depth = _nested_lock_dx.depth;
+    // _nested_lock_dx.depth must NOT be decremented until the end
+    // just in case debug prints cause us to be reentered and they do!
+    size_t depth = _nested_lock_dx.depth - 1;
 
-    if (MAX_SIZET == depth) {
-        ASSERT(MAX_SIZET != depth);
+    if (SIZE_MAX == depth) {
+        ASSERT(SIZE_MAX != depth);
         // Too many exit calls(), Attempt recovery by Clamping value
         _nested_lock_dx.depth = 0U;
         return;
@@ -212,58 +211,21 @@ void nested_lock_exit(void) {
                 _nested_lock_dx.max_elapse_cycle_count = elapse_cycle_count;
                 if (1 <= nested_lock_dbg_print_level &&
                     elapse_cycle_count >= MAX_INT_DISABLED_CYCLE_COUNT) {
-                    printReport();
+                    nested_lock_info_print_report();
                     DEBUG_MSG_PRINTF_PM("Current Nested lock time: %u us > %u us.\n",
                         elapse_cycle_count/clockCyclesPerMicrosecond(),
                         MAX_INT_DISABLED_CYCLE_COUNT/clockCyclesPerMicrosecond());
                     ASSERT(elapse_cycle_count < MAX_INT_DISABLED_CYCLE_COUNT);
                 }
                 if (2 <= nested_lock_dbg_print_level &&
-                    elapse_cycle_count >= (MAX_INT_DISABLED_CYCLE_COUNT * 2)) {
-                    postmortem_inflight_stack_dump(_nested_lock_dx.saved_ps[depth]);
-                    // do_once = false;
+                    elapse_cycle_count >= (MAX_INT_DISABLED_CYCLE_COUNT)) {
+                    postmortem_inflight_stack_trace(_nested_lock_dx.saved_ps[depth]);
                 }
             }
         }
 #endif
+        _nested_lock_dx.depth = depth;
         xt_wsr_ps(_nested_lock_dx.saved_ps[depth]);
-    }
-}
-
-#elif UMM_CRITICAL_METHOD == 2
- /*
-  * A simple nested counted lock - to implimented interrupt disable and
-  * restore, when count returns to zero.
-  *
-  * Weakness: w/o before/after INTLEVEL monitoring, INTLEVEL may be
-  * inadvertently lowered.
-  *
-  */
-static struct _SIMPLE_NESTED_LOCK  {
-    uint32_t saved_ps;
-    size_t depth;
-} _nested_lock = { 0U, 0U };
-
-#if DEBUG_NESTED_LOCK_INFO
-size_t get_nested_lock_depth(void) { return _nested_lock.depth;}
-// Stubs - not implemented yet.
-size_t get_nested_lock_depth_max(void) { return 0U;}
-unsigned char get_nested_lock_intlevel_max(void) { return 0U;}
-#endif
-
-void nested_lock_entry(void) {
-    // INTLEVEL 3 is the same value that ets_intr_lock() uses.
-    uint32_t savePS = xt_rsil(NESTED_LOCK_INTLEVEL);
-    if (0U == _nested_lock.depth){
-      _nested_lock.saved_ps = savePS;
-    }
-    _nested_lock.depth++;
-}
-
-void nested_lock_exit(void) {
-    _nested_lock.depth--;
-    if (0U == _nested_lock.depth) {
-        xt_wsr_ps(_nested_lock.saved_ps);
     }
 }
 #endif
