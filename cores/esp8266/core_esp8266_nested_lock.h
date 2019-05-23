@@ -33,8 +33,8 @@ extern "C" {
 
 #include <c_types.h>
 
-#define DEBUG_NESTED_LOCK_INFO 1
-#define UMM_CRITICAL_METHOD 1
+//#define DEBUG_NESTED_LOCK_INFO 1
+//#define UMM_CRITICAL_METHOD 1
 #define WRAP_ETS_INTR_LOCK 1
  /*
   * There are three methods for handling for UMM_CRITICAL_ENTRY/EXIT

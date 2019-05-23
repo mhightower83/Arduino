@@ -494,11 +494,31 @@
 #include <stdio.h>
 #include <string.h>
 #include <pgmspace.h>
-
-//D #include <HardwareSerial.h>
 #include "umm_malloc.h"
 
 #include "umm_malloc_cfg.h"   /* user-dependent */
+
+#if 1
+// Okay This does not work! SPIFFS.begin fails!
+#ifndef __STRINGIFY
+#define __STRINGIFY(a) #a
+#endif
+#ifndef xt_rsil
+#define xt_rsil(level) (__extension__({uint32_t state; __asm__ __volatile__("rsil %0," __STRINGIFY(level) : "=a" (state)); state;}))
+#endif
+#ifndef xt_wsr_ps
+#define xt_wsr_ps(state)  __asm__ __volatile__("wsr %0,ps; isync" :: "a" (state) : "memory")
+#endif
+extern "C" {
+#include <interrupts.h>
+}
+#undef UMM_CRITICAL_ENTRY
+#undef UMM_CRITICAL_EXIT
+#define UMM_CRITICAL_ENTRY() InterruptLock lock
+#define UMM_CRITICAL_EXIT() do {}while(false)
+// #define UMM_CRITICAL_ENTRY() uint32_t _reg_PS = xt_rsil(15)
+// #define UMM_CRITICAL_EXIT() xt_wsr_ps(_reg_PS)
+#endif
 
 extern "C" {
 
@@ -1364,6 +1384,11 @@ static void _umm_free( void *ptr ) {
   }
 
 #if 0
+  /*
+   * While true this would not reduce heap fragmentation; however, it might
+   * reduce the time it takes to perform integrity_check() - mjh May 22, 2019
+   */
+
   /*
    * The following is experimental code that checks to see if the block we just
    * freed can be assimilated with the very last block - it's pretty convoluted in
