@@ -33,7 +33,7 @@ extern "C" {
 
 #include <c_types.h>
 
-//#define DEBUG_NESTED_LOCK_INFO 1
+#define DEBUG_NESTED_LOCK_INFO 1
 //#define UMM_CRITICAL_METHOD 1
 #define WRAP_ETS_INTR_LOCK 1
  /*
@@ -59,7 +59,7 @@ extern "C" {
   *
   */
 
-#if DEBUG_NESTED_LOCK_INFO
+#if defined(DEBUG_NESTED_LOCK_INFO) || (defined(WRAP_ETS_INTR_LOCK) && defined(DEBUG_NESTED_LOCK_INFO))
 size_t ICACHE_RAM_ATTR get_nested_lock_depth(void);
 size_t ICACHE_RAM_ATTR get_nested_lock_depth_max(void);
 unsigned char ICACHE_RAM_ATTR get_nested_lock_intlevel_max(void);

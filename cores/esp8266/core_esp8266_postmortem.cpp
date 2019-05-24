@@ -354,8 +354,8 @@ void __panic_func(const char* file, int line, const char* func) {
     raise_exception(true);
 }
 
-// Typical call:  postmortem_inflight_stack_trace(xt_rsr_ps());
-void postmortem_inflight_stack_trace(uint32_t ps_reg) {
+// Typical call:  inflight_stack_trace(xt_rsr_ps());
+void inflight_stack_trace(uint32_t ps_reg) {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
     s_panic.ps_reg = ps_reg;

@@ -514,10 +514,11 @@ extern "C" {
 }
 #undef UMM_CRITICAL_ENTRY
 #undef UMM_CRITICAL_EXIT
-#define UMM_CRITICAL_ENTRY() InterruptLock lock
-#define UMM_CRITICAL_EXIT() do {}while(false)
-// #define UMM_CRITICAL_ENTRY() uint32_t _reg_PS = xt_rsil(15)
-// #define UMM_CRITICAL_EXIT() xt_wsr_ps(_reg_PS)
+// #define UMM_CRITICAL_ENTRY() InterruptLock lock
+// #define UMM_CRITICAL_EXIT() do {}while(false)
+#define UMM_CRITICAL_STORAGE uint32_t
+#define UMM_CRITICAL_ENTRY(ps) ps = xt_rsil(15)
+#define UMM_CRITICAL_EXIT(ps) xt_wsr_ps(ps)
 #endif
 
 extern "C" {
@@ -1042,6 +1043,7 @@ static void *get_unpoisoned( void *vptr ) {
 UMM_HEAP_INFO ummHeapInfo;
 
 void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
+  UMM_CRITICAL_STORAGE saved_ps;
 
   unsigned short int blockNo = 0;
 
@@ -1050,7 +1052,7 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
   }
 //D printf("\nWe are here .... PS=0x%03X\n", xt_rsr_ps());
   /* Protect the critical section... */
-  UMM_CRITICAL_ENTRY();
+  UMM_CRITICAL_ENTRY(saved_ps);
 
   /*
    * Clear out all of the entries in the ummHeapInfo structure before doing
@@ -1111,7 +1113,7 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
       if( ptr == &UMM_BLOCK(blockNo) ) {
 
         /* Release the critical section... */
-        UMM_CRITICAL_EXIT();
+        UMM_CRITICAL_EXIT(saved_ps);
 //D printf("\nWe are leaving now .... PS=0x%03X, level=%u\n", xt_rsr_ps(), get_nested_lock_depth());
 
         return( ptr );
@@ -1166,7 +1168,7 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
       ummHeapInfo.freeBlocks  );
 
   /* Release the critical section... */
-  UMM_CRITICAL_EXIT();
+  UMM_CRITICAL_EXIT(saved_ps);
 //D printf("\nWe are leaving now .... PS=0x%03X, level=%u\n", xt_rsr_ps(), get_nested_lock_depth());
   return( NULL );
 }
@@ -1327,6 +1329,7 @@ void ICACHE_FLASH_ATTR umm_init( void ) {
 /* ------------------------------------------------------------------------ */
 
 static void _umm_free( void *ptr ) {
+  UMM_CRITICAL_STORAGE saved_ps;
 
   unsigned short int c;
 
@@ -1348,7 +1351,7 @@ static void _umm_free( void *ptr ) {
    */
 
   /* Protect the critical section... */
-  UMM_CRITICAL_ENTRY();
+  UMM_CRITICAL_ENTRY(saved_ps);
 
   /* Figure out which block we're in. Note the use of truncated division... */
 
@@ -1385,11 +1388,6 @@ static void _umm_free( void *ptr ) {
 
 #if 0
   /*
-   * While true this would not reduce heap fragmentation; however, it might
-   * reduce the time it takes to perform integrity_check() - mjh May 22, 2019
-   */
-
-  /*
    * The following is experimental code that checks to see if the block we just
    * freed can be assimilated with the very last block - it's pretty convoluted in
    * terms of block index manipulation, and has absolutely no effect on heap
@@ -1412,12 +1410,14 @@ static void _umm_free( void *ptr ) {
 #endif
 
   /* Release the critical section... */
-  UMM_CRITICAL_EXIT();
+  UMM_CRITICAL_EXIT(saved_ps);
 }
 
 /* ------------------------------------------------------------------------ */
 
 static void *_umm_malloc( size_t size ) {
+  UMM_CRITICAL_STORAGE saved_ps;
+
   unsigned short int blocks;
   unsigned short int blockSize = 0;
 
@@ -1444,7 +1444,7 @@ static void *_umm_malloc( size_t size ) {
   }
 
   /* Protect the critical section... */
-  UMM_CRITICAL_ENTRY();
+  UMM_CRITICAL_ENTRY(saved_ps);
 
   blocks = umm_blocks( size );
 
@@ -1534,13 +1534,13 @@ static void *_umm_malloc( size_t size ) {
     DBG_LOG_DEBUG(  "Can't allocate %5d blocks\n", blocks );
 
     /* Release the critical section... */
-    UMM_CRITICAL_EXIT();
+    UMM_CRITICAL_EXIT(saved_ps);
 
     return( (void *)NULL );
   }
 
   /* Release the critical section... */
-  UMM_CRITICAL_EXIT();
+  UMM_CRITICAL_EXIT(saved_ps);
 
   return( (void *)&UMM_DATA(cf) );
 }
@@ -1548,6 +1548,7 @@ static void *_umm_malloc( size_t size ) {
 /* ------------------------------------------------------------------------ */
 
 static void *_umm_realloc( void *ptr, size_t size ) {
+  UMM_CRITICAL_STORAGE saved_ps;
 
   unsigned short int blocks;
   unsigned short int blockSize;
@@ -1589,7 +1590,7 @@ static void *_umm_realloc( void *ptr, size_t size ) {
   }
 
   /* Protect the critical section... */
-  UMM_CRITICAL_ENTRY();
+  UMM_CRITICAL_ENTRY(saved_ps);
 
   /*
    * Otherwise we need to actually do a reallocation. A naiive approach
@@ -1626,7 +1627,7 @@ static void *_umm_realloc( void *ptr, size_t size ) {
     DBG_LOG_DEBUG( "realloc the same size block - %d, do nothing\n", blocks );
 
     /* Release the critical section... */
-    UMM_CRITICAL_EXIT();
+    UMM_CRITICAL_EXIT(saved_ps);
 
     return( ptr );
   }
@@ -1647,7 +1648,10 @@ static void *_umm_realloc( void *ptr, size_t size ) {
    * new request! If this block of code runs, then the new block will
    * either fit the request exactly, or be larger than the request.
    */
-
+//? Note he does not check if the previous umm_assimilate_up grew the alloc
+//? enough to satisfy the request. If the downward block is available it is
+//? grown more and moved. This has the effect to compacting the heap reducing
+//? fragmentation. - Looks like this was part of Bill Dittman optimizations.
   if( (UMM_NBLOCK(UMM_PBLOCK(c)) & UMM_FREELIST_MASK) &&
       (blocks <= (UMM_NBLOCK(c)-UMM_PBLOCK(c)))    ) {
 
@@ -1670,8 +1674,15 @@ static void *_umm_realloc( void *ptr, size_t size ) {
      * Move the bytes down to the new block we just created, but be sure to move
      * only the original bytes.
      */
-
+//? can we safely turn on interrupts here?
+//? No - as part of the optimizations done by Bill Dittman the current
+//? allocation at this moment may be over sized. Thus more activity, that needs
+//? protection, may be done to release extra blocks.
+//? To try and keep interrupts off for >10us an unprotect/protect arround the
+//? memmove may be safe. All variables used are on the stack.
+    UMM_CRITICAL_EXIT(saved_ps); // added mjh May 23, 2019
     memmove( (void *)&UMM_DATA(c), ptr, curSize );
+    UMM_CRITICAL_ENTRY(saved_ps); // added
 
     /* And don't forget to adjust the pointer to the new block location! */
 
@@ -1697,6 +1708,7 @@ static void *_umm_realloc( void *ptr, size_t size ) {
 
     umm_make_new_block( c, blocks, 0, 0 );
     _umm_free( (void *)&UMM_DATA(c+blocks) );
+    //? intlevel=0, looks okay - we are on our way out from here
   } else {
     /* New block is bigger than the old block... */
 
@@ -1710,14 +1722,17 @@ static void *_umm_realloc( void *ptr, size_t size ) {
      */
 
     if( (ptr = _umm_malloc( size )) ) {
+      //? intlevel=0, looks okay - we are on our way out from here
+      UMM_CRITICAL_EXIT(saved_ps); // added mjh May 23, 2019
       memcpy( ptr, oldptr, curSize );
       _umm_free( oldptr );
+      return( ptr );  // UMM_CRITICAL_ENTRY(saved_ps);
     }
 
   }
 
   /* Release the critical section... */
-  UMM_CRITICAL_EXIT();
+  UMM_CRITICAL_EXIT(saved_ps);
 
   return( ptr );
 }
