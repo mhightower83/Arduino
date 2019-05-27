@@ -22,26 +22,12 @@
 
 extern "C" {
 
-inline bool interlocked_exchange_bool(volatile bool *target, bool value) {
-/*
-   Assembles to:
-
-   rsil    a5, 15
-   memw
-   l32i.n  a4, a2, 0
-   memw
-   s32i.n  a3, a2, 0
-   wsr     a5, ps
-   isync
-   mov.n   a2, a4
-   ret.n
- */
-
-  uint32_t ps = xt_rsil(15);
-  bool oldValue = *target;
-  *target = value;
-  xt_wsr_ps(ps);
-  return oldValue;
+inline bool interlocked_exchange_bool(bool *target, bool value) {
+    uint32_t ps = xt_rsil(15);
+    bool oldValue = *target;
+    *target = value;
+    xt_wsr_ps(ps);
+    return oldValue;
 }
 
 static void uart0_write_char_d(char c) {
@@ -74,19 +60,13 @@ static bool install_putc1 = true;
 // to be safely accessed from flash. This function encapsulates snprintf()
 // [which by definition will 0-terminate] and dumping to the UART.
 int inflight_printf(const char *str, ...) {
-    static volatile bool busy = false;
-    if(interlocked_exchange_bool(&busy, true))
+    static bool busy = false;
+    if (interlocked_exchange_bool(&busy, true))
         return -1;
 
     if (install_putc1) {
         // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
-#if   0
-        ets_install_putc1((void *)&uart0_write_char_d);
-#elif 0
-        ets_install_putc1((void *)&uart1_write_char_d);
-#else
         ets_install_putc1((void *)&uart_write_char_d);
-#endif
         install_putc1 = false;
     }
     // char destStr[160];
@@ -108,12 +88,12 @@ int inflight_printf(const char *str, ...) {
     system_soft_wdt_feed();
     uint32_t wdt_last_feeding = ESP.getCycleCount();
     while (*c) {
+        ets_putc(*(c++));
         // If we are printing a lot, make sure we get to finish.
         if ((ESP.getCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {
             system_soft_wdt_feed();
             wdt_last_feeding = ESP.getCycleCount();
         }
-        ets_putc(*(c++));
     }
     interlocked_exchange_bool(&busy, false);
     return destStrSz;

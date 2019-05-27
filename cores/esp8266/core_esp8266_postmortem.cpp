@@ -39,21 +39,7 @@
 
 extern "C" {
 
-inline bool interlocked_exchange_bool(volatile bool *target, bool value) {
-/*
-   Assembles to:
-
-   rsil    a5, 15
-   memw
-   l32i.n  a4, a2, 0
-   memw
-   s32i.n  a3, a2, 0
-   wsr     a5, ps
-   isync
-   mov.n   a2, a4
-   ret.n
- */
-
+inline bool interlocked_exchange_bool(bool *target, bool value) {
   uint32_t ps = xt_rsil(15);
   bool oldValue = *target;
   *target = value;
@@ -100,8 +86,8 @@ static bool install_putc1 = true;
 // to be safely accessed from flash. This function encapsulates snprintf()
 // [which by definition will 0-terminate] and dumping to the UART.
 int postmortem_printf(const char *str, ...) {
-    static volatile bool busy = false;
-    if(interlocked_exchange_bool(&busy, true))
+    static bool busy = false;
+    if (interlocked_exchange_bool(&busy, true))
         return -1;
 
     if (install_putc1) {
@@ -128,13 +114,12 @@ int postmortem_printf(const char *str, ...) {
     system_soft_wdt_stop();
     uint32_t wdt_last_feeding = ESP.getCycleCount() - WDT_TIME_TO_FEED;
     while (*c) {
+        ets_putc(*(c++));
         // If we are printing a lot, make sure we get to finish.
         if ((ESP.getCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {
             system_soft_wdt_feed();
-            //? Do we need this here?  system_soft_wdt_stop(); // Previous testing needed this repeated after feeding
             wdt_last_feeding = ESP.getCycleCount();
         }
-        ets_putc(*(c++));
     }
     system_soft_wdt_restart();
     interlocked_exchange_bool(&busy, false);

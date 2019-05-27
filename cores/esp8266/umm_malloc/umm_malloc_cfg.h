@@ -111,6 +111,9 @@ extern char _heap_start;
  * called from within umm_malloc()
  */
 
+void get_umm_time_performance(uint32_t *pInfo, uint32_t *pMalloc,
+                              uint32_t *pRealloc, uint32_t *pFree);
+
 #if (UMM_CRITICAL_METHOD == 1) || (UMM_CRITICAL_METHOD == 2)
 
 #define UMM_CRITICAL_ENTRY() nested_lock_entry()

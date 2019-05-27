@@ -64,16 +64,28 @@ size_t ICACHE_RAM_ATTR get_nested_lock_depth(void);
 size_t ICACHE_RAM_ATTR get_nested_lock_depth_max(void);
 unsigned char ICACHE_RAM_ATTR get_nested_lock_intlevel_max(void);
 size_t ICACHE_RAM_ATTR get_nested_lock_max_elapse_time_us(void);
+size_t ICACHE_RAM_ATTR get_lock_max_elapse_time_us(void);
 int ICACHE_RAM_ATTR set_nested_lock_dbg_print(int level);
 void ICACHE_RAM_ATTR nested_lock_info_reset(void);
 void ICACHE_RAM_ATTR nested_lock_info_print_report(void);
+uint32_t ICACHE_RAM_ATTR get_intlevel_already_set_count(void);
+uint32_t ICACHE_RAM_ATTR get_already_unlocked_count(void);
+uint32_t ICACHE_RAM_ATTR get_untracked_intlevel_change(void);
+uint32_t ICACHE_RAM_ATTR get_untracked_intlevel_change2(void);
+uint32_t ICACHE_RAM_ATTR get_untracked_intlevel_change3(void);
 #else
 #define get_nested_lock_depth() (__extension__({ (size_t)0U; }))
 #define get_nested_lock_depth_max() (__extension__({ (size_t)0U; }))
 #define get_nested_lock_intlevel_max() (__extension__({ (unsigned char)0U; }))
 #define get_nested_lock_max_elapse_time_us() (__extension__({ (unsigned char)0U; }))
+#define get_lock_max_elapse_time_us() (__extension__({ (unsigned char)0U; }))
 #define set_nested_lock_dbg_print(a) (__extension__({ (unsigned char)0U; }))
 #define nested_lock_info_print_report() (__extension__({ (unsigned char)0U; }))
+#define get_intlevel_already_set_count() (__extension__({ (unsigned char)0U; }))
+#define get_already_unlocked_count() (__extension__({ (unsigned char)0U; }))
+#define get_untracked_intlevel_change() (__extension__({ (unsigned char)0U; }))
+#define get_untracked_intlevel_change2() (__extension__({ (unsigned char)0U; }))
+#define get_untracked_intlevel_change3() (__extension__({ (unsigned char)0U; }))
 #endif
 
 #if UMM_CRITICAL_METHOD == 1

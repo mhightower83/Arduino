@@ -27,7 +27,8 @@ cont_yield:
     /* a1: sp */
     /* a2: void* cont_ctx */
     /* adjust stack and save registers */
-    addi    a1,  a1, -24
+    /* SP changes must be in multiples of 16 bytes. */
+    addi    a1,  a1, -32
     s32i    a12, a1, 0
     s32i    a13, a1, 4
     s32i    a14, a1, 8
@@ -54,7 +55,7 @@ cont_continue:
     l32i    a15, a1, 12
     l32i    a0,  a1, 16
     l32i    a2,  a1, 20
-    addi    a1,  a1, 24
+    addi    a1,  a1, 32
     ret
     .size    cont_yield, . - cont_yield
 
@@ -95,7 +96,7 @@ cont_run:
     /* a3: void (*pfn) */
 
     /* adjust stack and save registers */
-    addi    a1,  a1, -20
+    addi    a1,  a1, -32
     s32i    a12, a1, 0
     s32i    a13, a1, 4
     s32i    a14, a1, 8
@@ -145,6 +146,6 @@ cont_ret:
     l32i    a15, a1, 12
     l32i    a0,  a1, 16
     /* adjust stack and return */
-    addi    a1,  a1, 20
+    addi    a1,  a1, 32
     ret
     .size   cont_run, . - cont_run

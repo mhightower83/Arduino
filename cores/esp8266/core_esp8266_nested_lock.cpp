@@ -89,8 +89,8 @@ static volatile struct _DLX_NESTED_LOCK {
     size_t depth;
 #if DEBUG_NESTED_LOCK_INFO
     size_t max_depth;
-    uint32_t start_cycle_count;
-    uint32_t max_elapse_cycle_count;
+    uint32_t start_nested_cycle_count;
+    uint32_t max_nested_cycle_count;
     unsigned char max_intlevel;
 } _lock_info = { {0U}, 0U, 0U, 0U, 0U, 0U };
 #else
@@ -124,7 +124,7 @@ void nested_lock_entry(void) {
 
     size_t depth = _lock_info.depth;
     if (0 == depth)
-        _lock_info.start_cycle_count = ESP.getCycleCount();
+        _lock_info.start_nested_cycle_count = ESP.getCycleCount();
 
     if (NESTED_LOCK_SAVEDPS_LIMIT > depth) {
         _lock_info.saved_ps[depth] = savedPS;
@@ -154,9 +154,9 @@ void nested_lock_exit(void) {
     if (NESTED_LOCK_SAVEDPS_LIMIT > depth) {
 #if DEBUG_NESTED_LOCK_INFO
         if (0 == depth) {
-            uint32_t elapse_cycle_count = ESP.getCycleCount() - _lock_info.start_cycle_count;
-            if (elapse_cycle_count > _lock_info.max_elapse_cycle_count) {
-                _lock_info.max_elapse_cycle_count = elapse_cycle_count;
+            uint32_t elapse_cycle_count = ESP.getCycleCount() - _lock_info.start_nested_cycle_count;
+            if (elapse_cycle_count > _lock_info.max_nested_cycle_count) {
+                _lock_info.max_nested_cycle_count = elapse_cycle_count;
                 if (1 <= nested_lock_dbg_print_level &&
                     elapse_cycle_count >= MAX_INT_DISABLED_CYCLE_COUNT) {
                     nested_lock_info_print_report();
@@ -183,12 +183,20 @@ static struct _TRACK_ESP_INTR_LOCK {
     size_t depth;
     size_t max_depth;
     uint32_t start_cycle_count;
+    uint32_t start_nested_cycle_count;
     uint32_t max_elapse_cycle_count;
+    uint32_t max_nested_cycle_count;
+    uint32_t untracked_intlevel_change;
+    uint32_t untracked_intlevel_change2;
+    uint32_t untracked_intlevel_change3;
+    uint32_t intlevel_already_set_count;
+    uint32_t already_unlocked_count;
     bool one_shot;
     bool trip;
     unsigned char max_intlevel;
     unsigned char locked;
-} _lock_info = { 0U, 0U, 0U, 0U, true, false, 0U, 0U };
+    unsigned char last_intlevel;
+} _lock_info = { 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, 0U, false, false, 0U, 0U, 0U };
 #endif
 
 // This is now common to ets_intr_lock tacking
@@ -213,12 +221,40 @@ unsigned char get_nested_lock_intlevel_max(void) {
     return _lock_info.max_intlevel;
 }
 
-size_t get_nested_lock_max_elapse_cycle_count(void) {
-    return _lock_info.max_elapse_cycle_count;
+size_t get_nested_lock_max_cycle_count(void) {
+    return _lock_info.max_nested_cycle_count;
 }
 
 size_t get_nested_lock_max_elapse_time_us(void) {
+    return _lock_info.max_nested_cycle_count/clockCyclesPerMicrosecond();
+}
+
+size_t get_lock_max_elapse_cycle_count(void) {
+    return _lock_info.max_elapse_cycle_count;
+}
+
+size_t get_lock_max_elapse_time_us(void) {
     return _lock_info.max_elapse_cycle_count/clockCyclesPerMicrosecond();
+}
+
+uint32_t get_intlevel_already_set_count(void) {
+    return _lock_info.intlevel_already_set_count;
+}
+
+uint32_t get_already_unlocked_count(void) {
+  return _lock_info.already_unlocked_count;
+}
+
+uint32_t get_untracked_intlevel_change(void) {
+  return _lock_info.untracked_intlevel_change;
+}
+
+uint32_t get_untracked_intlevel_change2(void) {
+  return _lock_info.untracked_intlevel_change2;
+}
+
+uint32_t get_untracked_intlevel_change3(void) {
+  return _lock_info.untracked_intlevel_change3;
 }
 
 int nested_lock_dbg_print_level = 0;
@@ -232,6 +268,7 @@ void nested_lock_info_reset(void) {
     _lock_info.max_depth = 0U;
     _lock_info.max_intlevel = 0U;
     _lock_info.max_elapse_cycle_count = 0U;
+    _lock_info.max_nested_cycle_count = 0U;
     #if defined(WRAP_ETS_INTR_LOCK)
     _lock_info.one_shot = true;
     _lock_info.trip = false;
@@ -239,11 +276,17 @@ void nested_lock_info_reset(void) {
 }
 
 void nested_lock_info_print_report(void) {
-    DEBUG_MSG_PRINTF_PM("Current Nested lock depth: %u\n", get_nested_lock_depth());
-    DEBUG_MSG_PRINTF_PM("MAX Nested lock depth: %u\n", get_nested_lock_depth_max());
-    DEBUG_MSG_PRINTF_PM("MAX Nested lock held time: %u us\n", get_nested_lock_max_elapse_time_us());
-    DEBUG_MSG_PRINTF_PM("MAX Nested lock INTLEVEL:  %u\n", get_nested_lock_intlevel_max());
-    DEBUG_MSG_PRINTF_PM("Current INTLEVEL: %u\n", xt_rsr_ps() & 0x0FU);
+    DEBUG_MSG_PRINTF_PM("Current Nested lock depth:  %u\n", get_nested_lock_depth());
+    DEBUG_MSG_PRINTF_PM("MAX Nested lock depth:      %u\n", get_nested_lock_depth_max());
+    DEBUG_MSG_PRINTF_PM("MAX Nested lock held time:  %u us\n", get_nested_lock_max_elapse_time_us());
+    DEBUG_MSG_PRINTF_PM("MAX lock held time:         %u us\n", get_lock_max_elapse_time_us());
+    DEBUG_MSG_PRINTF_PM("MAX Nested lock INTLEVEL:   %u\n", get_nested_lock_intlevel_max());
+    DEBUG_MSG_PRINTF_PM("Current INTLEVEL:           %u\n", xt_rsr_ps() & 0x0FU);
+    DEBUG_MSG_PRINTF_PM("intlevel_already_set_count: %u\n", get_intlevel_already_set_count());
+    DEBUG_MSG_PRINTF_PM("already_unlocked_count:     %u\n", get_already_unlocked_count());
+    DEBUG_MSG_PRINTF_PM("untracked_intlevel_change:  %u\n", get_untracked_intlevel_change());
+    DEBUG_MSG_PRINTF_PM("untracked_intlevel_change2: %u\n", get_untracked_intlevel_change2());
+    DEBUG_MSG_PRINTF_PM("untracked_intlevel_change3: %u\n", get_untracked_intlevel_change3());
 }
 #endif
 
@@ -283,16 +326,44 @@ void ICACHE_RAM_ATTR __wrap_ets_intr_lock(void) {
     uint32_t savedPS = xt_rsr_ps();
     unsigned char intLevel = (unsigned char)0x0F & (unsigned char)savedPS;
 #endif
+
     __real_ets_intr_lock();
 
 #if defined(DEBUG_NESTED_LOCK_INFO)
+    size_t depth = _lock_info.depth;
+
+    // This one occurs, but not often.
+    // This can occur if unlock one more time than lock.
+    // Then on the 2nd call to lock this will be true.
+    //
+    // Maybe add code to see how long the depth stays negative
+    // and do a stack trace on event.
+    if (0U == depth &&       0U <  _lock_info.locked)
+        _lock_info.untracked_intlevel_change  += 1U;
+
+    // Haven't seen any of these
+    if (1U <= depth && intLevel != _lock_info.locked)
+        _lock_info.untracked_intlevel_change2 += 1U;
+
+    // Haven't seen any of these
+    if (1U <= depth && intLevel >  _lock_info.locked)
+        _lock_info.untracked_intlevel_change3 += 1U;
+
+    // Haven't seen any of these
+    if (0U == depth && 0U < intLevel)
+        _lock_info.intlevel_already_set_count += 1U;
+
     _lock_info.locked = 3;
     if (intLevel > _lock_info.max_intlevel)
         _lock_info.max_intlevel = intLevel;
 
-    size_t depth = _lock_info.depth;
-    if (0 == depth)
+    _lock_info.last_intlevel = intLevel;
+
+    if (0U == intLevel)
         _lock_info.start_cycle_count = ESP.getCycleCount();
+
+    if (0U == depth)
+        _lock_info.start_nested_cycle_count = ESP.getCycleCount();
 
     depth += 1;
     _lock_info.depth = depth;
@@ -323,29 +394,39 @@ void ICACHE_RAM_ATTR __wrap_ets_intr_unlock(void){
     //     _lock_info.depth = 0U;
     // }
     // 0 != (xt_rsr_ps() & 0x0FU) &&
-    if (_lock_info.trip && depth >= 0) {
+    uint32_t now_in_cycles = ESP.getCycleCount();
+    if (_lock_info.trip) { // && depth >= 0U) {
+        uint32_t elapsed = now_in_cycles - _lock_info.start_cycle_count;
         inflight_stack_trace(xt_rsr_ps());
-        uint32_t elapse_cycle_count = ESP.getCycleCount() - _lock_info.start_cycle_count;
-        DEBUG_MSG_PRINTF_PM("Current Nested lock time: %u us > %u us.\n",
-            elapse_cycle_count/clockCyclesPerMicrosecond(),
+        DEBUG_MSG_PRINTF_PM("Last lock to first unlock time: %u us > %u us.\n",
+            elapsed/clockCyclesPerMicrosecond(),
             MAX_INT_DISABLED_CYCLE_COUNT/clockCyclesPerMicrosecond());
-        if ( depth == 0) _lock_info.trip = false;
+        if (0 == depth)
+            _lock_info.trip = false;
     }
 
-    if (0 != _lock_info.locked) {
-        uint32_t elapse_cycle_count = ESP.getCycleCount() - _lock_info.start_cycle_count;
-        if (elapse_cycle_count > _lock_info.max_elapse_cycle_count) {
-            _lock_info.max_elapse_cycle_count = elapse_cycle_count;
+    if (0U == depth) {
+        uint32_t elapsed = now_in_cycles - _lock_info.start_nested_cycle_count;
+        if (elapsed > _lock_info.max_nested_cycle_count)
+            _lock_info.max_nested_cycle_count = elapsed;
+    }
+
+    if (0U == _lock_info.locked) {
+        _lock_info.already_unlocked_count += 1;
+    } else {
+        uint32_t elapsed = now_in_cycles - _lock_info.start_cycle_count;
+        if (elapsed > _lock_info.max_elapse_cycle_count) {
+            _lock_info.max_elapse_cycle_count = elapsed;
             if (1 <= nested_lock_dbg_print_level &&
-                elapse_cycle_count >= MAX_INT_DISABLED_CYCLE_COUNT) {
+                elapsed >= MAX_INT_DISABLED_CYCLE_COUNT) {
                 nested_lock_info_print_report();
                 DEBUG_MSG_PRINTF_PM("Current Nested lock time: %u us > %u us.\n",
-                    elapse_cycle_count/clockCyclesPerMicrosecond(),
+                    elapsed/clockCyclesPerMicrosecond(),
                     MAX_INT_DISABLED_CYCLE_COUNT/clockCyclesPerMicrosecond());
-                ASSERT(elapse_cycle_count < MAX_INT_DISABLED_CYCLE_COUNT);
+                ASSERT(elapsed < MAX_INT_DISABLED_CYCLE_COUNT);
             }
             if (2 <= nested_lock_dbg_print_level &&
-                elapse_cycle_count >= (MAX_INT_DISABLED_CYCLE_COUNT)) {
+                elapsed >= (MAX_INT_DISABLED_CYCLE_COUNT)) {
                 inflight_stack_trace(0);
             }
         }
