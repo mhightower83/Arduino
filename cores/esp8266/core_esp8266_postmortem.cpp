@@ -304,6 +304,7 @@ static void raise_exception(bool early_reporting) {
         // This path appears to cause bootloader to report the restart reason
         // as REASON_EXCEPTION_RST.
         xt_rsil(3);
+        while(1){} //Wait for Hardware WDT
         // __real_system_restart_local();
     }
 
