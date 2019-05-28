@@ -135,7 +135,7 @@ SECTIONS
   {
     _irom0_text_start = ABSOLUTE(.);
     *(.ver_number)
-#if 1
+#if 0
     *.c.o( EXCLUDE_FILE (umm_malloc.c.o) .literal*, EXCLUDE_FILE (umm_malloc.c.o) .text* )
     *.cpp.o(.literal*, .text*)
 #else
