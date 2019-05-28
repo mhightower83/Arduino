@@ -88,7 +88,7 @@ SECTIONS
   {
     *(.noinit)
   } >dram0_0_seg :dram0_0_phdr
-  
+
 #ifdef VTABLES_IN_DRAM
 #include "eagle.app.v6.common.ld.vtables.h"
 #endif
@@ -135,8 +135,13 @@ SECTIONS
   {
     _irom0_text_start = ABSOLUTE(.);
     *(.ver_number)
+#if 1
     *.c.o( EXCLUDE_FILE (umm_malloc.c.o) .literal*, EXCLUDE_FILE (umm_malloc.c.o) .text* )
     *.cpp.o(.literal*, .text*)
+#else
+    *.c.o(.literal*, .text*)
+    *.cpp.o( EXCLUDE_FILE (umm_malloc.cpp.o) .literal*, EXCLUDE_FILE (umm_malloc.cpp.o) .text* )
+#endif
     *.cc.o(.literal*, .text*)
 #ifdef VTABLES_IN_FLASH
     *(.rodata._ZTV*) /* C++ vtables */

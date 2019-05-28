@@ -678,8 +678,11 @@ extern int umm_last_fail_alloc_size;
 #  define DBG_LOG_INFO( format, ... )
 #endif
 
+#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
 #define DBG_LOG_FORCE( force, format, ... ) {if(force) {printf( format, ## __VA_ARGS__  );}}
-
+#else
+#define DBG_LOG_FORCE( ... ) do {} while(false)
+#endif
 /* }}} */
 
 /* ------------------------------------------------------------------------- */
@@ -1090,7 +1093,10 @@ static void *get_unpoisoned( void *vptr ) {
 
 UMM_HEAP_INFO ummHeapInfo;
 
-void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
+#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
+ICACHE_FLASH_ATTR
+#endif
+void *umm_info( void *ptr, int force ) {
   UMM_CRITICAL_STORAGE(id_info);
 
   unsigned short int blockNo = 0;
@@ -1162,7 +1168,6 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
 
         /* Release the critical section... */
         UMM_CRITICAL_EXIT(id_info);
-//D printf("\nWe are leaving now .... PS=0x%03X, level=%u\n", xt_rsr_ps(), get_nested_lock_depth());
 
         return( ptr );
       }
@@ -1217,7 +1222,7 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
 
   /* Release the critical section... */
   UMM_CRITICAL_EXIT(id_info);
-//D printf("\nWe are leaving now .... PS=0x%03X, level=%u\n", xt_rsr_ps(), get_nested_lock_depth());
+
   return( NULL );
 }
 
