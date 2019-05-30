@@ -521,7 +521,7 @@ private:
     struct AddrHelper
     {
         IPAddress srcaddr, dstaddr;
-        int16_t srcport;
+        uint16_t srcport;
 
         AddrHelper() { }
         AddrHelper(const ip_addr_t* src, const ip_addr_t* dst, uint16_t srcport):

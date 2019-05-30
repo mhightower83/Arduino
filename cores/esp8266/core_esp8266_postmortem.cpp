@@ -37,6 +37,12 @@
 #define xt_rsr_ps()  (__extension__({uint32_t state; __asm__ __volatile__("rsr.ps %0;" : "=a" (state)); state;}))
 #endif
 
+#if defined(DEBUG_ESP_PORT) || defined(DEBUG_IRAM_POSTMORTEM)
+#define DEBUG_IRAM_ATTR ICACHE_RAM_ATTR
+#else
+#define DEBUG_IRAM_ATTR
+#endif
+
 extern "C" {
 
 inline bool interlocked_exchange_bool(bool *target, bool value) {
@@ -81,11 +87,11 @@ extern void __custom_crash_callback( struct rst_info * rst_info, uint32_t stack,
 extern void custom_crash_callback( struct rst_info * rst_info, uint32_t stack, uint32_t stack_end ) __attribute__ ((weak, alias("__custom_crash_callback")));
 
 static bool install_putc1 = true;
-#define WDT_TIME_TO_FEED (500000*clockCyclesPerMicrosecond())
+#define WDT_TIME_TO_FEED (400000*clockCyclesPerMicrosecond())
 // Prints need to use our library function to allow for file and function
 // to be safely accessed from flash. This function encapsulates snprintf()
 // [which by definition will 0-terminate] and dumping to the UART.
-int postmortem_printf(const char *str, ...) {
+int DEBUG_IRAM_ATTR postmortem_printf(const char *str, ...) {
     static bool busy = false;
     if (interlocked_exchange_bool(&busy, true))
         return -1;
@@ -112,7 +118,7 @@ int postmortem_printf(const char *str, ...) {
     va_end(argPtr);
 
     system_soft_wdt_stop();
-    uint32_t wdt_last_feeding = ESP.getCycleCount() - WDT_TIME_TO_FEED;
+    uint32_t wdt_last_feeding = ESP.getCycleCount();
     while (*c) {
         ets_putc(*(c++));
         // If we are printing a lot, make sure we get to finish.
@@ -127,7 +133,7 @@ int postmortem_printf(const char *str, ...) {
 }
 #define ets_printf_P postmortem_printf
 
-static void crashReport(struct rst_info *rst_info, uint32_t sp_dump,
+static void DEBUG_IRAM_ATTR crashReport(struct rst_info *rst_info, uint32_t sp_dump,
                         uint32_t offset, bool custom_crash_cb_enabled) {
 
     install_putc1 = true;
@@ -195,7 +201,7 @@ static void crashReport(struct rst_info *rst_info, uint32_t sp_dump,
         custom_crash_callback( rst_info, sp_dump + offset, stack_end );
 }
 
-void __wrap_system_restart_local() {
+void DEBUG_IRAM_ATTR __wrap_system_restart_local() {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
 
@@ -240,7 +246,7 @@ void __wrap_system_restart_local() {
 }
 
 
-static void print_stack(uint32_t start, uint32_t end) {
+static void DEBUG_IRAM_ATTR print_stack(uint32_t start, uint32_t end) {
     for (uint32_t pos = start; pos < end; pos += 0x10) {
         uint32_t* values = (uint32_t*)(pos);
 
@@ -252,12 +258,12 @@ static void print_stack(uint32_t start, uint32_t end) {
     }
 }
 
-static void uart_write_char_d(char c) {
+static void DEBUG_IRAM_ATTR uart_write_char_d(char c) {
     uart0_write_char_d(c);
     uart1_write_char_d(c);
 }
 
-static void uart0_write_char_d(char c) {
+static void DEBUG_IRAM_ATTR uart0_write_char_d(char c) {
     while (((USS(0) >> USTXC) & 0xff)) { }
 
     if (c == '\n') {
@@ -266,7 +272,7 @@ static void uart0_write_char_d(char c) {
     USF(0) = c;
 }
 
-static void uart1_write_char_d(char c) {
+static void DEBUG_IRAM_ATTR uart1_write_char_d(char c) {
     while (((USS(1) >> USTXC) & 0xff) >= 0x7e) { }
 
     if (c == '\n') {
@@ -289,7 +295,7 @@ static void uart1_write_char_d(char c) {
 //  * Also, if before "syscall" a call to system_soft_wdt_stop() was done w/o
 //    a followup with system_soft_wdt_restarted (), a "Hardware WDT" will
 //    follow.
-static void raise_exception(bool early_reporting) {
+static void DEBUG_IRAM_ATTR raise_exception(bool early_reporting) {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
     s_panic.ps_reg = xt_rsr_ps();
@@ -312,17 +318,17 @@ static void raise_exception(bool early_reporting) {
     while (1); // never reached, needed to satisfy "noreturn" attribute
 }
 
-void abort() {
+void DEBUG_IRAM_ATTR abort() {
     s_panic.abort_called = true;
     raise_exception(true);
 }
 
-void __unhandled_exception(const char *str) {
+void DEBUG_IRAM_ATTR __unhandled_exception(const char *str) {
     s_panic.unhandled_exception = str;
     raise_exception(true);
 }
 
-void __assert_func(const char *file, int line, const char *func, const char *what) {
+void DEBUG_IRAM_ATTR __assert_func(const char *file, int line, const char *func, const char *what) {
     s_panic.file = file;
     s_panic.line = line;
     s_panic.func = func;
@@ -331,7 +337,7 @@ void __assert_func(const char *file, int line, const char *func, const char *wha
     raise_exception(true);
 }
 
-void __panic_func(const char* file, int line, const char* func) {
+void DEBUG_IRAM_ATTR __panic_func(const char* file, int line, const char* func) {
     s_panic.file = file;
     s_panic.line = line;
     s_panic.func = func;
@@ -341,7 +347,7 @@ void __panic_func(const char* file, int line, const char* func) {
 }
 
 // Typical call:  inflight_stack_trace(xt_rsr_ps());
-void inflight_stack_trace(uint32_t ps_reg) {
+void DEBUG_IRAM_ATTR inflight_stack_trace(uint32_t ps_reg) {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
     s_panic.ps_reg = ps_reg;
