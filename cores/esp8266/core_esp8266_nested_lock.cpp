@@ -25,7 +25,7 @@ Copyright (c) 2019 Michael Hightgower. All rights reserved.
 
 extern "C" {
 int postmortem_printf(const char *str, ...) __attribute__((format(printf, 1, 2)));
-void inflight_stack_trace(uint32_t ps);
+// void inflight_stack_trace(uint32_t ps);
 };
 
 #define DEBUG_MSG_PRINTF_PM(fmt, ...) postmortem_printf( PSTR(fmt), ##__VA_ARGS__)
@@ -158,18 +158,18 @@ void nested_lock_exit(void) {
         uint32_t elapse_cycle_count = ESP.getCycleCount() - _lock_info.start_nested_cycle_count;
         if (elapse_cycle_count > _lock_info.max_nested_cycle_count) {
             _lock_info.max_nested_cycle_count = elapse_cycle_count;
-            if (1 <= nested_lock_dbg_print_level &&
-                elapse_cycle_count >= MAX_INT_DISABLED_CYCLE_COUNT) {
-                nested_lock_info_print_report();
-                DEBUG_MSG_PRINTF_PM("Current Nested lock time: %u us > %u us.\n",
-                    elapse_cycle_count/clockCyclesPerMicrosecond(),
-                    MAX_INT_DISABLED_CYCLE_COUNT/clockCyclesPerMicrosecond());
-                ASSERT(elapse_cycle_count < MAX_INT_DISABLED_CYCLE_COUNT);
-            }
-            if (2 <= nested_lock_dbg_print_level &&
-                elapse_cycle_count >= (MAX_INT_DISABLED_CYCLE_COUNT)) {
-                inflight_stack_trace(_lock_info.saved_ps[depth]);
-            }
+            // if (1 <= nested_lock_dbg_print_level &&
+            //     elapse_cycle_count >= MAX_INT_DISABLED_CYCLE_COUNT) {
+            //     nested_lock_info_print_report();
+            //     DEBUG_MSG_PRINTF_PM("Current Nested lock time: %u us > %u us.\n",
+            //         elapse_cycle_count/clockCyclesPerMicrosecond(),
+            //         MAX_INT_DISABLED_CYCLE_COUNT/clockCyclesPerMicrosecond());
+            //     ASSERT(elapse_cycle_count < MAX_INT_DISABLED_CYCLE_COUNT);
+            // }
+            // if (2 <= nested_lock_dbg_print_level &&
+            //     elapse_cycle_count >= (MAX_INT_DISABLED_CYCLE_COUNT)) {
+            //     inflight_stack_trace(_lock_info.saved_ps[depth]);
+            // }
         }
     } else if (0 > depth) {
         ASSERT(0 > depth);
@@ -272,12 +272,12 @@ uint32_t get_untracked_intlevel_change3(void) {
   return _lock_info.untracked_intlevel_change3;
 }
 
-int nested_lock_dbg_print_level = 0;
-int set_nested_lock_dbg_print(int level) {
-    int previous = nested_lock_dbg_print_level;
-    nested_lock_dbg_print_level = level;
-    return previous;
-}
+// int nested_lock_dbg_print_level = 0;
+// int set_nested_lock_dbg_print(int level) {
+//     int previous = nested_lock_dbg_print_level;
+//     nested_lock_dbg_print_level = level;
+//     return previous;
+// }
 
 void nested_lock_info_reset(void) {
     _lock_info.max_depth = 0U;
@@ -341,7 +341,7 @@ extern void __real_ets_intr_unlock(void);
 /*
    This is a log of code to monitor the ets_intr_lock/ets_intr_unlock.
    The "Heisenberg uncertainty principle" or perhaps more acuratly the
-   "Observer Effect" should be keeped in mind when looking at the results.   
+   "Observer Effect" should be keeped in mind when looking at the results.
  */
 
 void ICACHE_RAM_ATTR __wrap_ets_intr_lock(void) {
@@ -392,14 +392,14 @@ void ICACHE_RAM_ATTR __wrap_ets_intr_lock(void) {
     if (depth > _lock_info.max_depth)
         _lock_info.max_depth = depth;
 
-    if (_lock_info.one_shot && depth == 2) {
-        inflight_stack_trace(xt_rsr_ps());
-        _lock_info.one_shot = false;
-        _lock_info.trip = true;
-    }
-
-    if (1 <= nested_lock_dbg_print_level)
-        ASSERT(MAX_NESTED_LOCK_DEPTH > depth);
+    // if (_lock_info.one_shot && depth == 2) {
+    //     inflight_stack_trace(xt_rsr_ps());
+    //     _lock_info.one_shot = false;
+    //     _lock_info.trip = true;
+    // }
+    //
+    // if (1 <= nested_lock_dbg_print_level)
+    //     ASSERT(MAX_NESTED_LOCK_DEPTH > depth);
 }
 
 void ICACHE_RAM_ATTR __wrap_ets_intr_unlock(void){
@@ -408,15 +408,15 @@ void ICACHE_RAM_ATTR __wrap_ets_intr_unlock(void){
     int depth = _lock_info.depth - 1;
 
     uint32_t now_in_cycles = ESP.getCycleCount();
-    if (_lock_info.trip) { // && depth >= 0U) {
-        uint32_t elapsed = now_in_cycles - _lock_info.start_cycle_count;
-        inflight_stack_trace(xt_rsr_ps());
-        DEBUG_MSG_PRINTF_PM("Last lock to first unlock time: %u us > %u us.\n",
-            elapsed/clockCyclesPerMicrosecond(),
-            MAX_INT_DISABLED_CYCLE_COUNT/clockCyclesPerMicrosecond());
-        if (0 == depth)
-            _lock_info.trip = false;
-    }
+    // if (_lock_info.trip) { // && depth >= 0U) {
+    //     uint32_t elapsed = now_in_cycles - _lock_info.start_cycle_count;
+    //     inflight_stack_trace(xt_rsr_ps());
+    //     DEBUG_MSG_PRINTF_PM("Last lock to first unlock time: %u us > %u us.\n",
+    //         elapsed/clockCyclesPerMicrosecond(),
+    //         MAX_INT_DISABLED_CYCLE_COUNT/clockCyclesPerMicrosecond());
+    //     if (0 == depth)
+    //         _lock_info.trip = false;
+    // }
 
     if (0 == depth) {
         uint32_t elapsed = now_in_cycles - _lock_info.start_nested_cycle_count;
@@ -435,18 +435,18 @@ void ICACHE_RAM_ATTR __wrap_ets_intr_unlock(void){
         uint32_t elapsed = now_in_cycles - _lock_info.start_cycle_count;
         if (elapsed > _lock_info.max_elapse_cycle_count) {
             _lock_info.max_elapse_cycle_count = elapsed;
-            if (1 <= nested_lock_dbg_print_level &&
-                elapsed >= MAX_INT_DISABLED_CYCLE_COUNT) {
-                nested_lock_info_print_report();
-                DEBUG_MSG_PRINTF_PM("Current Nested lock time: %u us > %u us.\n",
-                    elapsed/clockCyclesPerMicrosecond(),
-                    MAX_INT_DISABLED_CYCLE_COUNT/clockCyclesPerMicrosecond());
-                ASSERT(elapsed < MAX_INT_DISABLED_CYCLE_COUNT);
-            }
-            if (2 <= nested_lock_dbg_print_level &&
-                elapsed >= (MAX_INT_DISABLED_CYCLE_COUNT)) {
-                inflight_stack_trace(0);
-            }
+            // if (1 <= nested_lock_dbg_print_level &&
+            //     elapsed >= MAX_INT_DISABLED_CYCLE_COUNT) {
+            //     nested_lock_info_print_report();
+            //     DEBUG_MSG_PRINTF_PM("Current Nested lock time: %u us > %u us.\n",
+            //         elapsed/clockCyclesPerMicrosecond(),
+            //         MAX_INT_DISABLED_CYCLE_COUNT/clockCyclesPerMicrosecond());
+            //     ASSERT(elapsed < MAX_INT_DISABLED_CYCLE_COUNT);
+            // }
+            // if (2 <= nested_lock_dbg_print_level &&
+            //     elapsed >= (MAX_INT_DISABLED_CYCLE_COUNT)) {
+            //     inflight_stack_trace(0);
+            // }
         }
     }
     _lock_info.depth = depth;

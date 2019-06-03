@@ -6,10 +6,16 @@
 #define _UMM_MALLOC_CFG_H
 
 #include <debug.h>
-#include "core_esp8266_nested_lock.h"
+//D #include <Esp.h>
+//D #include <core_esp8266_nested_lock.h>
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+//D int postmortem_printf(const char *str, ...) __attribute__((format(printf, 1, 2)));
+//D void inflight_stack_trace(uint32_t ps);
 
 #include <stdlib.h>
 #include <osapi.h>
@@ -111,27 +117,135 @@ extern char _heap_start;
  * called from within umm_malloc()
  */
 
-void get_umm_time_performance(uint32_t *pInfo, uint32_t *pMalloc,
-                              uint32_t *pRealloc, uint32_t *pFree);
+#define DEFAULT_INTR_DISABLE_LEVEL 3
+#define UMM_ALT_CRITICAL_METHOD 2
 
-#if (UMM_CRITICAL_METHOD == 1) || (UMM_CRITICAL_METHOD == 2)
+#if (UMM_ALT_CRITICAL_METHOD == 1) || (UMM_ALT_CRITICAL_METHOD == 2)
 
-#define UMM_CRITICAL_ENTRY() nested_lock_entry()
-#define UMM_CRITICAL_EXIT()  nested_lock_exit()
-#else // #if (UMM_CRITICAL_METHOD == 1) || (UMM_CRITICAL_METHOD == 2)
+#ifndef __STRINGIFY
+#define __STRINGIFY(a) #a
+#endif
+
+#define XTOS_SET_MIN_INTLEVEL(intlevel) \
+    ({ \
+        unsigned __tmp, __tmp2, __tmp3; \
+        __asm__ __volatile__( \
+            "rsr.ps %0\n" /* get old (current) PS.INTLEVEL */ \
+            "movi   %2, " __STRINGIFY(intlevel) "\n" \
+            "extui  %1, %0, 0, 4\n"   /* keep only INTLEVEL bits of parameter */ \
+            "blt    %2, %1, 1f\n" \
+            "rsil   %0, " __STRINGIFY(intlevel) "\n" \
+            "1:\n" \
+            : "=a" (__tmp), "=&a" (__tmp2), "=&a" (__tmp3) : : "memory" ); \
+    __tmp;})
+
+#define XTOS_RESTORE_INTLEVEL(restoreval) \
+    do { \
+        unsigned __tmp = (restoreval); \
+        __asm__ __volatile__( \
+            "wsr.ps  %0\n" \
+            "rsync\n" \
+            : : "a" (__tmp) : "memory" ); \
+    } while(false)
+#endif
+
+#if (UMM_ALT_CRITICAL_METHOD == 1)
+// This method preserves the higher intlevel on entry and restores the
+// original intlevel at exit.
+#define UMM_CRITICAL_DECL(tag) uint32_t _saved_ps_##tag
+#define UMM_CRITICAL_ENTRY(tag) _saved_ps_##tag = XTOS_SET_MIN_INTLEVEL(DEFAULT_INTR_DISABLE_LEVEL)
+#define UMM_CRITICAL_EXIT(tag) XTOS_RESTORE_INTLEVEL(_saved_ps_##tag)
+
+#elif (UMM_ALT_CRITICAL_METHOD == 2)
+// This options allows the gathering of data to evaluate the behavior of
+// the system and the performance of method 1
+#define UMM_TIME_DATA 1
+
+typedef struct _TIME_STAT {
+  uint32_t min;
+  uint32_t max;
+  uint32_t start;
+  uint32_t intlevel;
+} time_stat_t;
+
+struct _UMM_TIME_STATS {
+  time_stat_t id_malloc;
+  time_stat_t id_realloc;
+  time_stat_t id_free;
+  time_stat_t id_info;
+  time_stat_t id_fast_free;
+};
+
+bool get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size);
+
+static inline ICACHE_RAM_ATTR uint32_t GetCycleCount() {
+  uint32_t ccount;
+  __asm__ __volatile__("esync; rsr %0,ccount":"=a"(ccount));
+  return ccount;
+}
+
+static inline void _critical_entry(time_stat_t *p, uint32_t *saved_ps) {
+    *saved_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_INTR_DISABLE_LEVEL);
+    if (0U != (*saved_ps & 0x0FU)) {
+        p->intlevel += 1U;
+        // inflight_stack_trace(*saved_ps);
+    }
+
+    p->start = GetCycleCount();
+}
+
+static inline void _critical_exit(time_stat_t *p, uint32_t *saved_ps) {
+    uint32_t elapse = GetCycleCount() - p->start;
+    if (elapse < p->min)
+        p->min = elapse;
+
+    if (elapse > p->max)
+        p->max = elapse;
+
+    XTOS_RESTORE_INTLEVEL(*saved_ps);
+}
+
+#define UMM_CRITICAL_DECL(tag) uint32_t _saved_ps_##tag
+#define UMM_CRITICAL_ENTRY(tag) _critical_entry(&time_stats.tag, &_saved_ps_##tag)
+#define UMM_CRITICAL_EXIT(tag) _critical_exit(&time_stats.tag, &_saved_ps_##tag)
+
+// #if (UMM_ALT_CRITICAL_METHOD == 2)
+// static struct _UMM_TIME_STATS time_stats = {
+//   {0xFFFFFFFF, 0U, 0U, 0U},
+//   {0xFFFFFFFF, 0U, 0U, 0U},
+//   {0xFFFFFFFF, 0U, 0U, 0U},
+//   {0xFFFFFFFF, 0U, 0U, 0U},
+//   {0xFFFFFFFF, 0U, 0U, 0U} };
+//
+// bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size) {
+//     if (p && size != 0) {
+//         uint32_t save_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_INTR_DISABLE_LEVEL);
+//         memcpy(p, &time_stats, size);
+//         XTOS_RESTORE_INTLEVEL(save_ps);
+//         return true;
+//     }
+//     return false;
+// }
+// #endif
+
+#endif
+
+#if !defined(UMM_ALT_CRITICAL_METHOD) || (UMM_ALT_CRITICAL_METHOD == 0)
+
+#define UMM_CRITICAL_DECL(tag)
 
 // Use the ESP8266 SDK ets_intr_lock/ets_intr_unlock
-#if WRAP_ETS_INTR_LOCK
-#define UMM_CRITICAL_ENTRY() __wrap_ets_intr_lock()
-#define UMM_CRITICAL_EXIT()  __wrap_ets_intr_unlock()
-
-#else // #if WRAP_ETS_INTR_LOCK
-#define UMM_CRITICAL_ENTRY() ets_intr_lock()
 // ets_intr_unlock() will enable interrupts even if they were off when
 // ets_intr_lock() was called.
-#define UMM_CRITICAL_EXIT()  ets_intr_unlock()
+#if WRAP_ETS_INTR_LOCK
+#define UMM_CRITICAL_ENTRY(tag) __wrap_ets_intr_lock()
+#define UMM_CRITICAL_EXIT(tag)  __wrap_ets_intr_unlock()
+
+#else // #if WRAP_ETS_INTR_LOCK
+#define UMM_CRITICAL_ENTRY(tag) ets_intr_lock()
+#define UMM_CRITICAL_EXIT(tag)  ets_intr_unlock()
 #endif // #if WRAP_ETS_INTR_LOCK
-#endif // #if (UMM_CRITICAL_METHOD == 1) || (UMM_CRITICAL_METHOD == 2)
+#endif // #if !defined(UMM_ALT_CRITICAL_METHOD) || (UMM_ALT_CRITICAL_METHOD == 0)
 
 /*
  * -D UMM_INTEGRITY_CHECK :

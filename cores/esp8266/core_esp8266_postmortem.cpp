@@ -56,7 +56,7 @@ extern void __real_system_restart_local();
 
 #define PS_INVALID_VALUE (0x80000000U)
 static struct _PANIC {
-// These will be pointers to PROGMEM const strings
+  // These will be pointers to PROGMEM const strings
     const char* file;
     const char* func;
     const char* what;

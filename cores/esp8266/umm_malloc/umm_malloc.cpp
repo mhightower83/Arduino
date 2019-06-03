@@ -499,77 +499,26 @@
 #include "umm_malloc_cfg.h"   /* user-dependent */
 
 
-
-#if 1
-#define UMM_TIME_DATA
-
-#define DEFAULT_INTR_DISABLE_LEVEL 3
-
-#ifndef __STRINGIFY
-#define __STRINGIFY(a) #a
-#endif
-#ifndef xt_rsil
-#define xt_rsil(level) (__extension__({uint32_t state; __asm__ __volatile__("rsil %0," __STRINGIFY(level) : "=a" (state)); state;}))
-#endif
-#ifndef xt_wsr_ps
-#define xt_wsr_ps(state)  __asm__ __volatile__("wsr %0,ps; isync" :: "a" (state) : "memory")
-#endif
-
-#define UMM_CRITICAL_STORAGE(id) uint32_t saved_ps_##id
-
-#ifdef UMM_TIME_DATA
-#include <Esp.h>
-
-typedef struct _TIME_STAT {
-  uint32_t max;
-  uint32_t start;
-} time_stat_t;
-
-static struct _UMM_TIME_STATS {
-  time_stat_t id_malloc;
-  time_stat_t id_realloc;
-  time_stat_t id_free;
-  time_stat_t id_info;
-} time_stats = { {0U, 0U}, {0U, 0U}, {0U, 0U}, {0U, 0U} };
-
-#undef UMM_CRITICAL_ENTRY
-#undef UMM_CRITICAL_EXIT
-
-#define UMM_CRITICAL_ENTRY(id) \
-    saved_ps_##id = xt_rsil(DEFAULT_INTR_DISABLE_LEVEL); \
-    time_stats.id.start = ESP.getCycleCount()
-#define UMM_CRITICAL_EXIT(id) \
-    do { \
-        uint32_t elapse = ESP.getCycleCount() - time_stats.id.start; \
-        if (elapse > time_stats.id.max) \
-            time_stats.id.max = elapse; \
-        xt_wsr_ps(saved_ps_##id); \
-    } while(false)
-
-void get_umm_time_performance(uint32_t *pInfo, uint32_t *pMalloc,
-                              uint32_t *pRealloc, uint32_t *pFree) {
-    if (pInfo)
-        *pInfo = time_stats.id_info.max/clockCyclesPerMicrosecond();
-
-    if (pMalloc)
-        *pMalloc = time_stats.id_malloc.max/clockCyclesPerMicrosecond();
-
-    if (pRealloc)
-        *pRealloc = time_stats.id_realloc.max/clockCyclesPerMicrosecond();
-
-    if (pFree)
-        *pFree = time_stats.id_free.max/clockCyclesPerMicrosecond();
-}
-#else
-#undef UMM_CRITICAL_ENTRY
-#undef UMM_CRITICAL_EXIT
-#define UMM_CRITICAL_ENTRY(id) saved_ps_##id = xt_rsil(DEFAULT_INTR_DISABLE_LEVEL)
-#define UMM_CRITICAL_EXIT(id) xt_wsr_ps(saved_ps_##id)
-#endif
-
-#endif // #if 1
-
 extern "C" {
+
+#if (UMM_ALT_CRITICAL_METHOD == 2)
+static struct _UMM_TIME_STATS time_stats = {
+  {0xFFFFFFFF, 0U, 0U, 0U},
+  {0xFFFFFFFF, 0U, 0U, 0U},
+  {0xFFFFFFFF, 0U, 0U, 0U},
+  {0xFFFFFFFF, 0U, 0U, 0U},
+  {0xFFFFFFFF, 0U, 0U, 0U} };
+
+bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size) {
+    if (p && size != 0) {
+        uint32_t save_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_INTR_DISABLE_LEVEL);
+        memcpy(p, &time_stats, size);
+        XTOS_RESTORE_INTLEVEL(save_ps);
+        return true;
+    }
+    return false;
+}
+#endif
 
 // Printing from the malloc routines is tricky. Since a lot of library calls
 // will want to do malloc. This approach appears to work almost all the time.
@@ -1097,14 +1046,14 @@ UMM_HEAP_INFO ummHeapInfo;
 ICACHE_FLASH_ATTR
 #endif
 void *umm_info( void *ptr, int force ) {
-  UMM_CRITICAL_STORAGE(id_info);
+  UMM_CRITICAL_DECL(id_info);
 
   unsigned short int blockNo = 0;
 
   if (umm_heap == NULL) {
       umm_init();
   }
-//D printf("\nWe are here .... PS=0x%03X\n", xt_rsr_ps());
+
   /* Protect the critical section... */
   UMM_CRITICAL_ENTRY(id_info);
 
@@ -1224,6 +1173,50 @@ void *umm_info( void *ptr, int force ) {
   UMM_CRITICAL_EXIT(id_info);
 
   return( NULL );
+}
+
+size_t umm_fast_free_heap_size( void ) {
+  UMM_CRITICAL_DECL(id_fast_free);
+
+  unsigned short int blockNo = 0;
+
+  if (umm_heap == NULL) {
+      umm_init();
+  }
+
+  unsigned short int freeBlocks = 0;
+
+  /* Protect the critical section... */
+  UMM_CRITICAL_ENTRY(id_fast_free);
+
+  /*
+   * Now loop through the block lists, and the size
+   * of free blocks. The terminating condition is an nb pointer with
+   * a value of zero...
+   */
+
+  blockNo = UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK;
+
+  while( UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK ) {
+    size_t curBlocks = (UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK )-blockNo;
+
+    /* Is this a free block? */
+
+    if( UMM_NBLOCK(blockNo) & UMM_FREELIST_MASK )
+      freeBlocks += curBlocks;
+
+    blockNo = UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK;
+  }
+  /* Release the critical section... */
+  UMM_CRITICAL_EXIT(id_fast_free);
+
+  /*
+   * Update the total with information from the last block, the
+   * rest must be free!
+   */
+  freeBlocks  += UMM_NUMBLOCKS-blockNo;
+
+  return (size_t)freeBlocks * sizeof(umm_block);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1382,7 +1375,7 @@ void ICACHE_FLASH_ATTR umm_init( void ) {
 /* ------------------------------------------------------------------------ */
 
 static void _umm_free( void *ptr ) {
-  UMM_CRITICAL_STORAGE(id_free);
+  UMM_CRITICAL_DECL(id_free);
 
   unsigned short int c;
 
@@ -1450,7 +1443,7 @@ static void _umm_free( void *ptr ) {
    * here for posterity.
    */
 
-  if( 0 == UMM_NBLOCK(UMM_NBLOCK(c) & UMM_BLOCKNO_MASK ) ) {
+  if(0 == UMM_NBLOCK(UMM_NBLOCK(c) & UMM_BLOCKNO_MASK ) ) {
 
     if( UMM_PBLOCK(UMM_NBLOCK(c) & UMM_BLOCKNO_MASK) != UMM_PFREE(UMM_NBLOCK(c) & UMM_BLOCKNO_MASK) ) {
       UMM_NFREE(UMM_PFREE(UMM_NBLOCK(c) & UMM_BLOCKNO_MASK)) = c;
@@ -1471,7 +1464,7 @@ static void _umm_free( void *ptr ) {
 /* ------------------------------------------------------------------------ */
 
 static void *_umm_malloc( size_t size ) {
-  UMM_CRITICAL_STORAGE(id_malloc);
+  UMM_CRITICAL_DECL(id_malloc);
 
   unsigned short int blocks;
   unsigned short int blockSize = 0;
@@ -1605,7 +1598,7 @@ static void *_umm_malloc( size_t size ) {
 /* ------------------------------------------------------------------------ */
 
 static void *_umm_realloc( void *ptr, size_t size ) {
-  UMM_CRITICAL_STORAGE(id_realloc);
+  UMM_CRITICAL_DECL(id_realloc);
 
   unsigned short int blocks;
   unsigned short int blockSize;
@@ -1664,9 +1657,12 @@ static void *_umm_realloc( void *ptr, size_t size ) {
 
   c = (((char *)ptr)-(char *)(&(umm_heap[0])))/sizeof(umm_block);
 
+  //?? move critical to here
+  UMM_CRITICAL_ENTRY(id_realloc);
+
   /* Figure out how big this block is... */
 
-  blockSize = (UMM_NBLOCK(c) - c);   //?? not sure this is safe outside critical
+  blockSize = (UMM_NBLOCK(c) - c);
 
   /* Figure out how many bytes are in this block */
 
@@ -1684,7 +1680,7 @@ static void *_umm_realloc( void *ptr, size_t size ) {
     DBG_LOG_DEBUG( "realloc the same size block - %d, do nothing\n", blocks );
 
     /* Release the critical section... */
-    //++ UMM_CRITICAL_EXIT(id_realloc);
+    UMM_CRITICAL_EXIT(id_realloc);
 
     return( ptr );
   }
@@ -1696,8 +1692,6 @@ static void *_umm_realloc( void *ptr, size_t size ) {
    * If it's still too small, we have to free it anyways and it will save the
    * assimilation step later in free :-)
    */
-//?? move critical to here
-  UMM_CRITICAL_ENTRY(id_realloc);  //-- moved saved 7 us
 
   umm_assimilate_up( c );
 
@@ -1741,11 +1735,12 @@ static void *_umm_realloc( void *ptr, size_t size ) {
 //? memmove may be safe. All variables used are on the stack.
     UMM_CRITICAL_EXIT(id_realloc); // added mjh May 23, 2019
     memmove( (void *)&UMM_DATA(c), ptr, curSize );
-    UMM_CRITICAL_ENTRY(id_realloc); // added
 
     /* And don't forget to adjust the pointer to the new block location! */
 
     ptr    = (void *)&UMM_DATA(c);
+
+    UMM_CRITICAL_ENTRY(id_realloc); // added
   }
 
   /* Now calculate the block size again...and we'll have three cases */
@@ -1770,10 +1765,11 @@ static void *_umm_realloc( void *ptr, size_t size ) {
     // TODO: Confirm the current block and this new block are in an issolated
     // like state. As if they were allocated. That being the case we should
     // be able to safely do a critical exit here before free, etc.
-    // Reducing the interrupt lockout period. This saved off 20 us.
+    // Reducing the interrupt lockout period.
     UMM_CRITICAL_EXIT(id_realloc);
 
     _umm_free( (void *)&UMM_DATA(c+blocks) );
+    
     return( ptr );
     //? intlevel=0, looks okay - we are on our way out from here
   } else {

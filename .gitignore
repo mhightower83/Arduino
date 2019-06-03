@@ -9,7 +9,8 @@ tools/sdk/lib/liblwip_src.a
 tools/sdk/lwip/src/build
 tools/sdk/lwip/src/liblwip_src.a
 tools/sdk/ld/backup
-tools/sdk/ld/eagle.app.v6.common.ld
+tools/sdk/lwip2/include
+tools/sdk/lwip2/builder
 xfer/
 
 tests/hosts/lcov/
