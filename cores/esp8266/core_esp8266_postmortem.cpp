@@ -98,10 +98,9 @@ int DEBUG_IRAM_ATTR postmortem_printf(const char *str, ...) {
 
     if (install_putc1) {
         // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
-        ets_install_putc1((void *)&uart_write_char_d);
+        ets_install_putc1(&uart_write_char_d);
         install_putc1 = false;
     }
-    // char destStr[160];
     va_list argPtr;
     va_start(argPtr, str);
     int destStrSz = vsnprintf(NULL, 0, str, argPtr);
@@ -258,6 +257,7 @@ static void DEBUG_IRAM_ATTR print_stack(uint32_t start, uint32_t end) {
     }
 }
 
+// mjh - why not use <uart_tx_one_char> from bootrom
 static void DEBUG_IRAM_ATTR uart_write_char_d(char c) {
     uart0_write_char_d(c);
     uart1_write_char_d(c);

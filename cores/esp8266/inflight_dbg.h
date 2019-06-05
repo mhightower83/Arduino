@@ -1,4 +1,4 @@
-#ifndef _INFLIGHT_DBG_H
+#if 0 //ndef _INFLIGHT_DBG_H
 #define _INFLIGHT_DBG_H
 
 #ifdef __cplusplus

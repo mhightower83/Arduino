@@ -501,6 +501,8 @@
 
 extern "C" {
 
+#include <esp8266_peri.h>
+
 #if (UMM_ALT_CRITICAL_METHOD == 2)
 static struct _UMM_TIME_STATS time_stats = {
   {0xFFFFFFFF, 0U, 0U, 0U},
@@ -521,11 +523,57 @@ bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t s
 #endif
 
 // Printing from the malloc routines is tricky. Since a lot of library calls
-// will want to do malloc. This approach appears to work almost all the time.
+// will want to do malloc.
 #if 1 //defined(DEBUG_ESP_PORT) && ( defined(DEBUG_ESP_CORE) || defined(DEBUG_ESP_OOM) )
-int postmortem_printf(const char *str, ...) __attribute__((format(printf, 1, 2)));
-#define printf(fmt, ...) do { postmortem_printf( PSTR(fmt), ##__VA_ARGS__); } while (false)
+/*
+  Objective:  To be able to print "last gasp" diagnostic messages
+  when interrupts are disabled and w/o availability of heap resources.
+*/
+
+void system_soft_wdt_feed(void); // <user_interface.h>
+static uint32_t wdt_last_feeding;
+
+#if !(UMM_ALT_CRITICAL_METHOD == 2)
+static inline uint32_t GetCycleCount() {
+  uint32_t ccount;
+  __asm__ __volatile__("esync; rsr %0,ccount":"=a"(ccount));
+  return ccount;
+}
+#endif
+
+#define WDT_TIME_TO_FEED (400000UL*( F_CPU / 1000000UL )) // 0.4 secs.
+
+static void ICACHE_RAM_ATTR _local_putc(char c) {
+  if ((GetCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {
+    system_soft_wdt_feed();
+    wdt_last_feeding = GetCycleCount();
+  }
+
+  // Note, ets_putc() places a wrapper around uart_tx_one_char(),
+  //  it will save/restore a0.
+  if (c == '\n')
+    ets_putc('\r');
+
+  ets_putc(c);
+}
+
+int _sz_printf_P(const size_t fmt_size, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+int _sz_printf_P(const size_t fmt_size, const char *fmt, ...) {
+  system_soft_wdt_feed();
+  wdt_last_feeding = GetCycleCount();
+
+  char ram_fmt[fmt_size];
+  memcpy_P(ram_fmt, fmt, fmt_size);
+  va_list argPtr;
+  va_start(argPtr, fmt);
+  int result = ets_vprintf(&_local_putc, ram_fmt, argPtr);
+  va_end(argPtr);
+  return result;
+}
+
+#define printf(fmt, ...) _sz_printf_P(sizeof(fmt), PSTR(fmt), ##__VA_ARGS__)
 #else
+
 #define printf(fmt, ...) do { } while (false)
 #endif
 
@@ -627,7 +675,7 @@ extern int umm_last_fail_alloc_size;
 #  define DBG_LOG_INFO( format, ... )
 #endif
 
-#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
+#if 1 //defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
 #define DBG_LOG_FORCE( force, format, ... ) {if(force) {printf( format, ## __VA_ARGS__  );}}
 #else
 #define DBG_LOG_FORCE( ... ) do {} while(false)
@@ -1769,7 +1817,7 @@ static void *_umm_realloc( void *ptr, size_t size ) {
     UMM_CRITICAL_EXIT(id_realloc);
 
     _umm_free( (void *)&UMM_DATA(c+blocks) );
-    
+
     return( ptr );
     //? intlevel=0, looks okay - we are on our way out from here
   } else {
