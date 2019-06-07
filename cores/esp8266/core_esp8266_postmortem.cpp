@@ -98,7 +98,9 @@ int DEBUG_IRAM_ATTR postmortem_printf(const char *str, ...) {
 
     if (install_putc1) {
         // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
-        ets_install_putc1(&uart_write_char_d);
+        ets_install_putc1((void *)&uart_write_char_d);
+        // ROM code saves handler at 0x3fffdd3c + 12
+        // ets_install_uart_printf() would have installed the rom uart cooked handler.
         install_putc1 = false;
     }
     va_list argPtr;
@@ -119,6 +121,10 @@ int DEBUG_IRAM_ATTR postmortem_printf(const char *str, ...) {
     system_soft_wdt_stop();
     uint32_t wdt_last_feeding = ESP.getCycleCount();
     while (*c) {
+      // Note, as far as I can tell ets_putc() does not use the handler
+      // installed above. It calls on uart_tx_one_char.
+      // TODO: Research, does ets_install_putc1() change anything that might
+      // help with printing here?
         ets_putc(*(c++));
         // If we are printing a lot, make sure we get to finish.
         if ((ESP.getCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {

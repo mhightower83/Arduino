@@ -499,6 +499,21 @@
 #include "umm_malloc_cfg.h"   /* user-dependent */
 
 
+// class RomUartSelect {
+//   UartSelect(unsigned char uart_num) {
+// #ifdef DEBUG_ESP_PORT
+//     if (strcmp("Serial1", __STRINGIFY(DEBUG_ESP_PORT) == 0) {
+//       uart_buff_switch(1);
+//     } else {
+//       uart_buff_switch(0);
+//     }
+// #else
+//     uart_buff_switch(0);
+// #endif
+//   }
+// }
+// RomUartSelect initUart();
+
 extern "C" {
 
 #include <esp8266_peri.h>
@@ -531,8 +546,8 @@ bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t s
 */
 
 void system_soft_wdt_feed(void); // <user_interface.h>
+constexpr uint32_t WDT_TIME_TO_FEED = (400000UL*( F_CPU / 1000000UL )); // 0.4 secs.
 static uint32_t wdt_last_feeding;
-
 #if !(UMM_ALT_CRITICAL_METHOD == 2)
 static inline uint32_t GetCycleCount() {
   uint32_t ccount;
@@ -541,40 +556,43 @@ static inline uint32_t GetCycleCount() {
 }
 #endif
 
-#define WDT_TIME_TO_FEED (400000UL*( F_CPU / 1000000UL )) // 0.4 secs.
+// ROM _putc1, ignores CRs and sends CR/LF for LF, newline.
+// Always returns character sent.
+constexpr int (*_putc)(int) = (int (*)(int))0x40001dcc;
 
-static void ICACHE_RAM_ATTR _local_putc(char c) {
+static int ICACHE_RAM_ATTR _local_putc(int c) {
   if ((GetCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {
     system_soft_wdt_feed();
     wdt_last_feeding = GetCycleCount();
   }
-
-  // Note, ets_putc() places a wrapper around uart_tx_one_char(),
-  //  it will save/restore a0.
-  if (c == '\n')
-    ets_putc('\r');
-
-  ets_putc(c);
+  return _putc(c);
 }
 
-int _sz_printf_P(const size_t fmt_size, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
-int _sz_printf_P(const size_t fmt_size, const char *fmt, ...) {
+int _sz_printf_P(const size_t buf_len, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+int _sz_printf_P(const size_t buf_len, const char *fmt, ...) {
   system_soft_wdt_feed();
   wdt_last_feeding = GetCycleCount();
 
-  char ram_fmt[fmt_size];
-  memcpy_P(ram_fmt, fmt, fmt_size);
+  char __aligned(4) ram_buf[buf_len];
+  ets_memcpy(ram_buf, fmt, buf_len);
   va_list argPtr;
   va_start(argPtr, fmt);
-  int result = ets_vprintf(&_local_putc, ram_fmt, argPtr);
+  int result = ets_vprintf(&_local_putc, ram_buf, argPtr);
   va_end(argPtr);
   return result;
 }
 
-#define printf(fmt, ...) _sz_printf_P(sizeof(fmt), PSTR(fmt), ##__VA_ARGS__)
+#define printf(fmt, ...) _sz_printf_P((sizeof(fmt) + 3) & ~0x03U, PSTR(fmt), ##__VA_ARGS__)
 #else
 
-#define printf(fmt, ...) do { } while (false)
+// #define printf(fmt, ...) do { } while (false)
+#define printf(fmt, ...) \
+  do {  \
+    static const char fstr[] PROGMEM = fmt; \
+    char rstr[((sizeof(fmt) + 3) & ~0x03U)]; \
+    os_memcpy(rstr, fstr, sizeof(rstr)); \
+    printf(rstr, ##__VA_ARGS__); \
+  } while (0)
 #endif
 
 // From UMM, the last caller of a malloc/realloc/calloc which failed:
@@ -1090,10 +1108,10 @@ static void *get_unpoisoned( void *vptr ) {
 
 UMM_HEAP_INFO ummHeapInfo;
 
-#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
+// #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
 ICACHE_FLASH_ATTR
-#endif
-void *umm_info( void *ptr, int force ) {
+// #endif
+void * umm_info( void *ptr, int force ) {
   UMM_CRITICAL_DECL(id_info);
 
   unsigned short int blockNo = 0;
