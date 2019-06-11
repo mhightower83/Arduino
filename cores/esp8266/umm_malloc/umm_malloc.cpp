@@ -498,22 +498,6 @@
 
 #include "umm_malloc_cfg.h"   /* user-dependent */
 
-
-// class RomUartSelect {
-//   UartSelect(unsigned char uart_num) {
-// #ifdef DEBUG_ESP_PORT
-//     if (strcmp("Serial1", __STRINGIFY(DEBUG_ESP_PORT) == 0) {
-//       uart_buff_switch(1);
-//     } else {
-//       uart_buff_switch(0);
-//     }
-// #else
-//     uart_buff_switch(0);
-// #endif
-//   }
-// }
-// RomUartSelect initUart();
-
 extern "C" {
 
 #include <esp8266_peri.h>
@@ -545,54 +529,35 @@ bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t s
   when interrupts are disabled and w/o availability of heap resources.
 */
 
-void system_soft_wdt_feed(void); // <user_interface.h>
-constexpr uint32_t WDT_TIME_TO_FEED = (400000UL*( F_CPU / 1000000UL )); // 0.4 secs.
-static uint32_t wdt_last_feeding;
-#if !(UMM_ALT_CRITICAL_METHOD == 2)
-static inline uint32_t GetCycleCount() {
-  uint32_t ccount;
-  __asm__ __volatile__("esync; rsr %0,ccount":"=a"(ccount));
-  return ccount;
-}
-#endif
-
 // ROM _putc1, ignores CRs and sends CR/LF for LF, newline.
 // Always returns character sent.
-constexpr int (*_putc)(int) = (int (*)(int))0x40001dcc;
-
-static int ICACHE_RAM_ATTR _local_putc(int c) {
-  if ((GetCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {
-    system_soft_wdt_feed();
-    wdt_last_feeding = GetCycleCount();
-  }
-  return _putc(c);
-}
+constexpr int (*_putc1)(int) = (int (*)(int))0x40001dcc;
+void uart_buff_switch(uint8_t);
 
 int _sz_printf_P(const size_t buf_len, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 int _sz_printf_P(const size_t buf_len, const char *fmt, ...) {
-  system_soft_wdt_feed();
-  wdt_last_feeding = GetCycleCount();
+#ifdef DEBUG_ESP_PORT
+#define VALUE(x) __STRINGIFY(x)
+  // Preprocessor and compiler combined will optomize away the if.
+  if (strcmp("Serial1", VALUE(DEBUG_ESP_PORT)) == 0) {
+    uart_buff_switch(1U);
+  } else {
+    uart_buff_switch(0U);
+  }
+#else
+  uart_buff_switch(0U); // This will clear RX FIFO
+#endif
 
   char __aligned(4) ram_buf[buf_len];
   ets_memcpy(ram_buf, fmt, buf_len);
   va_list argPtr;
   va_start(argPtr, fmt);
-  int result = ets_vprintf(&_local_putc, ram_buf, argPtr);
+  int result = ets_vprintf(_putc1, ram_buf, argPtr);
   va_end(argPtr);
   return result;
 }
 
 #define printf(fmt, ...) _sz_printf_P((sizeof(fmt) + 3) & ~0x03U, PSTR(fmt), ##__VA_ARGS__)
-#else
-
-// #define printf(fmt, ...) do { } while (false)
-#define printf(fmt, ...) \
-  do {  \
-    static const char fstr[] PROGMEM = fmt; \
-    char rstr[((sizeof(fmt) + 3) & ~0x03U)]; \
-    os_memcpy(rstr, fstr, sizeof(rstr)); \
-    printf(rstr, ##__VA_ARGS__); \
-  } while (0)
 #endif
 
 // From UMM, the last caller of a malloc/realloc/calloc which failed:
@@ -745,6 +710,8 @@ unsigned short int umm_numblocks = 0;
 #define UMM_PFREE(b)  (UMM_BLOCK(b).body.free.prev)
 #define UMM_DATA(b)   (UMM_BLOCK(b).body.data)
 
+// mjh 061019 this does not look safe no access locks.
+//
 /* integrity check (UMM_INTEGRITY_CHECK) {{{ */
 #if defined(UMM_INTEGRITY_CHECK)
 /*
@@ -1723,11 +1690,13 @@ static void *_umm_realloc( void *ptr, size_t size ) {
 
   c = (((char *)ptr)-(char *)(&(umm_heap[0])))/sizeof(umm_block);
 
-  //?? move critical to here
-  UMM_CRITICAL_ENTRY(id_realloc);
+  // //?? move critical to here
+  // UMM_CRITICAL_ENTRY(id_realloc);
 
   /* Figure out how big this block is... */
 
+  //?? This should be save, because we are only working with the boundarys
+  //?? of our allocation. No need for lock here. - mjh 061019
   blockSize = (UMM_NBLOCK(c) - c);
 
   /* Figure out how many bytes are in this block */
@@ -1745,11 +1714,14 @@ static void *_umm_realloc( void *ptr, size_t size ) {
 
     DBG_LOG_DEBUG( "realloc the same size block - %d, do nothing\n", blocks );
 
-    /* Release the critical section... */
-    UMM_CRITICAL_EXIT(id_realloc);
+    // /* Release the critical section... */
+    // UMM_CRITICAL_EXIT(id_realloc);
 
     return( ptr );
   }
+
+  //?? move critical to here
+  UMM_CRITICAL_ENTRY(id_realloc);
 
   /*
    * Now we have a block size that could be bigger or smaller. Either

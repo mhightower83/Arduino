@@ -67,9 +67,9 @@ static struct _PANIC {
 } s_panic = {NULL, NULL, NULL, NULL, PS_INVALID_VALUE, 0, false};
 
 void abort() __attribute__((noreturn));
-static void uart_write_char_d(char c);
-static void uart0_write_char_d(char c);
-static void uart1_write_char_d(char c);
+// static void uart_write_char_d(char c);
+// static void uart0_write_char_d(char c);
+// static void uart1_write_char_d(char c);
 static void print_stack(uint32_t start, uint32_t end);
 
 // From UMM, the last caller of a malloc/realloc/calloc which failed:
@@ -86,8 +86,21 @@ extern void __custom_crash_callback( struct rst_info * rst_info, uint32_t stack,
 
 extern void custom_crash_callback( struct rst_info * rst_info, uint32_t stack, uint32_t stack_end ) __attribute__ ((weak, alias("__custom_crash_callback")));
 
-static bool install_putc1 = true;
-#define WDT_TIME_TO_FEED (400000*clockCyclesPerMicrosecond())
+// static bool install_putc1 = true;
+// if (install_putc1) {
+//     // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
+//     ets_install_putc1((void *)&uart_write_char_d);
+//     // ROM code saves handler at 0x3fffdd3c + 12
+//     // ets_install_uart_printf() would have installed the rom uart cooked handler.
+//     install_putc1 = false;
+// }
+
+// #define WDT_TIME_TO_FEED (400000*clockCyclesPerMicrosecond())
+// ROM _putc1, ignores CRs and sends CR/LF for LF, newline.
+// Always returns character sent.
+constexpr int (*_putc1)(int) = (int (*)(int))0x40001dcc;
+void uart_buff_switch(uint8_t);
+
 // Prints need to use our library function to allow for file and function
 // to be safely accessed from flash. This function encapsulates snprintf()
 // [which by definition will 0-terminate] and dumping to the UART.
@@ -96,13 +109,19 @@ int DEBUG_IRAM_ATTR postmortem_printf(const char *str, ...) {
     if (interlocked_exchange_bool(&busy, true))
         return -1;
 
-    if (install_putc1) {
-        // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
-        ets_install_putc1((void *)&uart_write_char_d);
-        // ROM code saves handler at 0x3fffdd3c + 12
-        // ets_install_uart_printf() would have installed the rom uart cooked handler.
-        install_putc1 = false;
+    WDT_FEED();
+#ifdef DEBUG_ESP_PORT
+#define VALUE(x) __STRINGIFY(x)
+    // Preprocessor and compiler combined will optomize away the if.
+    if (strcmp("Serial1", VALUE(DEBUG_ESP_PORT)) == 0) {
+      uart_buff_switch(1U);
+    } else {
+      uart_buff_switch(0U);
     }
+#else
+    uart_buff_switch(0U); // This will clear RX FIFO
+#endif
+
     va_list argPtr;
     va_start(argPtr, str);
     int destStrSz = vsnprintf(NULL, 0, str, argPtr);
@@ -118,30 +137,39 @@ int DEBUG_IRAM_ATTR postmortem_printf(const char *str, ...) {
     vsnprintf(destStr, destStrSz + 1, str, argPtr);
     va_end(argPtr);
 
-    system_soft_wdt_stop();
-    uint32_t wdt_last_feeding = ESP.getCycleCount();
+    // system_soft_wdt_stop();
+    // uint32_t wdt_last_feeding = ESP.getCycleCount();
     while (*c) {
-      // Note, as far as I can tell ets_putc() does not use the handler
-      // installed above. It calls on uart_tx_one_char.
-      // TODO: Research, does ets_install_putc1() change anything that might
-      // help with printing here?
-        ets_putc(*(c++));
-        // If we are printing a lot, make sure we get to finish.
-        if ((ESP.getCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {
-            system_soft_wdt_feed();
-            wdt_last_feeding = ESP.getCycleCount();
-        }
+        _putc1(*(c++));
+        // // If we are printing a lot, make sure we get to finish.
+        // if ((ESP.getCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {
+        //     system_soft_wdt_feed();
+        //     wdt_last_feeding = ESP.getCycleCount();
+        // }
     }
-    system_soft_wdt_restart();
+    // system_soft_wdt_restart();
     interlocked_exchange_bool(&busy, false);
     return destStrSz;
 }
 #define ets_printf_P postmortem_printf
 
+// void uart_buff_switch(uint8_t);
+// #ifdef DEBUG_ESP_PORT
+// #define VALUE(x) __STRINGIFY(x)
+//   // Preprocessor and compiler combined will optomize away the if.
+//   if (strcmp("Serial1", VALUE(DEBUG_ESP_PORT)) == 0) {
+//     uart_buff_switch(1U);
+//   } else {
+//     uart_buff_switch(0U);
+//   }
+// #else
+//   uart_buff_switch(0U); // This will clear RX FIFO
+// #endif
+
 static void DEBUG_IRAM_ATTR crashReport(struct rst_info *rst_info, uint32_t sp_dump,
                         uint32_t offset, bool custom_crash_cb_enabled) {
 
-    install_putc1 = true;
+    // install_putc1 = true;
 
     if (PS_INVALID_VALUE != s_panic.ps_reg)
         ets_printf_P(PSTR("\nPS Register=0x%03X, Interrupts %S\n"), s_panic.ps_reg, (s_panic.ps_reg & 0x0FU)?PSTR("disabled"):PSTR("enabled"));
@@ -263,29 +291,29 @@ static void DEBUG_IRAM_ATTR print_stack(uint32_t start, uint32_t end) {
     }
 }
 
-// mjh - why not use <uart_tx_one_char> from bootrom
-static void DEBUG_IRAM_ATTR uart_write_char_d(char c) {
-    uart0_write_char_d(c);
-    uart1_write_char_d(c);
-}
-
-static void DEBUG_IRAM_ATTR uart0_write_char_d(char c) {
-    while (((USS(0) >> USTXC) & 0xff)) { }
-
-    if (c == '\n') {
-        USF(0) = '\r';
-    }
-    USF(0) = c;
-}
-
-static void DEBUG_IRAM_ATTR uart1_write_char_d(char c) {
-    while (((USS(1) >> USTXC) & 0xff) >= 0x7e) { }
-
-    if (c == '\n') {
-        USF(1) = '\r';
-    }
-    USF(1) = c;
-}
+// // mjh - why not use <uart_tx_one_char> from bootrom
+// static void DEBUG_IRAM_ATTR uart_write_char_d(char c) {
+//     uart0_write_char_d(c);
+//     uart1_write_char_d(c);
+// }
+//
+// static void DEBUG_IRAM_ATTR uart0_write_char_d(char c) {
+//     while (((USS(0) >> USTXC) & 0xff)) { }
+//
+//     if (c == '\n') {
+//         USF(0) = '\r';
+//     }
+//     USF(0) = c;
+// }
+//
+// static void DEBUG_IRAM_ATTR uart1_write_char_d(char c) {
+//     while (((USS(1) >> USTXC) & 0xff) >= 0x7e) { }
+//
+//     if (c == '\n') {
+//         USF(1) = '\r';
+//     }
+//     USF(1) = c;
+// }
 //
 // __panic_func, __assert_func, __unhandled_exception, and abort all call
 // raise_exception() which then finishes with a "syscall". After a delay, we
@@ -301,6 +329,13 @@ static void DEBUG_IRAM_ATTR uart1_write_char_d(char c) {
 //  * Also, if before "syscall" a call to system_soft_wdt_stop() was done w/o
 //    a followup with system_soft_wdt_restarted (), a "Hardware WDT" will
 //    follow.
+
+#ifndef __STRINGIFY
+#define __STRINGIFY(a) #a
+#endif
+#define RSR(sr) ({uint32_t r; asm volatile ("rsr %0," __STRINGIFY(sr) : "=a"(r)); r;})
+void user_uart_wait_tx_fifo_empty(uint32 uart_num, uint32 x);
+
 static void DEBUG_IRAM_ATTR raise_exception(bool early_reporting) {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
@@ -309,15 +344,34 @@ static void DEBUG_IRAM_ATTR raise_exception(bool early_reporting) {
         // Need to generate debug info NOW if interrupts are disabled.
         // Note this would have followed the path of "Soft WDT reset".
         struct rst_info rst_info;
+#if 0
         memset(&rst_info, 0, sizeof(rst_info));
         rst_info.reason = REASON_SOFT_WDT_RST; // Fake it
+#else
+        rst_info.exccause = RSR(EXCCAUSE);
+        rst_info.epc1 = RSR(EPC1);
+        rst_info.epc2 = RSR(EPC2);
+        rst_info.epc3 = RSR(EPC3);
+        rst_info.excvaddr = RSR(EXCVADDR);
+        rst_info.depc = RSR(DEPC);
+        rst_info.reason = REASON_SOFT_WDT_RST; // Fake it =3
+        system_rtc_mem_write(0, &rst_info, sizeof(rst_info));
+#endif
         crashReport(&rst_info, sp_dump, 0, true);
-        ets_delay_us(10000);
-        // This path appears to cause bootloader to report the restart reason
-        // as REASON_EXCEPTION_RST.
-        xt_rsil(3);
-        while(1){} //Wait for Hardware WDT
-        // __real_system_restart_local();
+
+        // Maybe call __real_system_restart_local();
+        // It waits for the tx FIFOs to empty and other stuff before
+        // calling system_restart_core(). IT looks like the right way to handle
+        // this.
+
+        // // user_uart_wait_tx_fifo_empty(0, 500000);
+        // // user_uart_wait_tx_fifo_empty(1, 500000);
+        // ets_delay_us(10000);
+        // // This path appears to cause bootloader to report the restart reason
+        // // as REASON_EXCEPTION_RST.
+        // xt_rsil(3);
+        // while(1){} //Wait for Hardware WDT
+        __real_system_restart_local(); // Should not return.
     }
 
     __asm__ __volatile__ ("syscall");
