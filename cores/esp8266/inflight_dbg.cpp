@@ -23,6 +23,75 @@
 
 extern "C" {
 
+  #if 1 //defined(DEBUG_ESP_PORT) && ( defined(DEBUG_ESP_CORE) || defined(DEBUG_ESP_OOM) )
+  /*
+    Objective:  To be able to print "last gasp" diagnostic messages
+    when interrupts are disabled and w/o availability of heap resources.
+  */
+
+  void system_soft_wdt_feed(void); // <user_interface.h>
+  constexpr uint32_t WDT_TIME_TO_FEED = (400000UL*( F_CPU / 1000000UL )); // 0.4 secs.
+  static uint32_t wdt_last_feeding;
+  #if !(UMM_ALT_CRITICAL_METHOD == 2)
+  static inline uint32_t GetCycleCount() {
+    uint32_t ccount;
+    __asm__ __volatile__("esync; rsr %0,ccount":"=a"(ccount));
+    return ccount;
+  }
+  #endif
+
+  // ROM _putc1, ignores CRs and sends CR/LF for LF, newline.
+  // Always returns character sent.
+  constexpr int (*_putc1)(int) = (int (*)(int))0x40001dcc;
+  void uart_buff_switch(uint8_t);
+
+  static int ICACHE_RAM_ATTR _local_putc(int c) {
+    if ((GetCycleCount() - wdt_last_feeding) >= WDT_TIME_TO_FEED) {
+      system_soft_wdt_feed();
+      wdt_last_feeding = GetCycleCount();
+    }
+    return _putc1(c);
+  }
+
+  int _sz_printf_P(const size_t buf_len, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+  int _sz_printf_P(const size_t buf_len, const char *fmt, ...) {
+    system_soft_wdt_feed();
+    wdt_last_feeding = GetCycleCount();
+
+  #ifdef DEBUG_ESP_PORT
+  #define VALUE(x) __STRINGIFY(x)
+    // Preprocessor and compiler combined will optomize away the if.
+    if (strcmp("Serial1", VALUE(DEBUG_ESP_PORT)) == 0) {
+      uart_buff_switch(1U);
+    } else {
+      uart_buff_switch(0U);
+    }
+  #else
+    uart_buff_switch(0); // This will clear RX FIFO
+  #endif
+
+    char __aligned(4) ram_buf[buf_len];
+    ets_memcpy(ram_buf, fmt, buf_len);
+    va_list argPtr;
+    va_start(argPtr, fmt);
+    int result = ets_vprintf(&_local_putc, ram_buf, argPtr);
+    va_end(argPtr);
+    return result;
+  }
+
+  #define printf(fmt, ...) _sz_printf_P((sizeof(fmt) + 3) & ~0x03U, PSTR(fmt), ##__VA_ARGS__)
+  #else
+
+  // #define printf(fmt, ...) do { } while (false)
+  #define printf(fmt, ...) \
+    do {  \
+      static const char fstr[] PROGMEM = fmt; \
+      char rstr[((sizeof(fmt) + 3) & ~0x03U)]; \
+      os_memcpy(rstr, fstr, sizeof(rstr)); \
+      printf(rstr, ##__VA_ARGS__); \
+    } while (0)
+  #endif
+
 inline bool interlocked_exchange_bool(bool *target, bool value) {
     uint32_t ps = xt_rsil(15);
     bool oldValue = *target;
