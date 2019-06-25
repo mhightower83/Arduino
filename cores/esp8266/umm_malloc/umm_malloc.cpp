@@ -521,10 +521,11 @@ bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t s
 }
 #endif
 
-// Printing from the malloc routines is tricky. Since a lot of library calls
-// will want to do malloc.
 #if 1 //defined(DEBUG_ESP_PORT) && ( defined(DEBUG_ESP_CORE) || defined(DEBUG_ESP_OOM) )
 /*
+  Printing from the malloc routines is tricky. Since a lot of library calls
+  will want to do malloc.
+
   Objective:  To be able to print "last gasp" diagnostic messages
   when interrupts are disabled and w/o availability of heap resources.
 */
@@ -538,14 +539,14 @@ int _sz_printf_P(const size_t buf_len, const char *fmt, ...) __attribute__((form
 int _sz_printf_P(const size_t buf_len, const char *fmt, ...) {
 #ifdef DEBUG_ESP_PORT
 #define VALUE(x) __STRINGIFY(x)
-  // Preprocessor and compiler combined will optomize away the if.
+  // Preprocessor and compiler together will optimize away the if.
   if (strcmp("Serial1", VALUE(DEBUG_ESP_PORT)) == 0) {
     uart_buff_switch(1U);
   } else {
     uart_buff_switch(0U);
   }
 #else
-  uart_buff_switch(0U); // This will also clear RX FIFO
+  uart_buff_switch(0U); // Side effect, clears RX FIFO
 #endif
 
   char __aligned(4) ram_buf[buf_len];

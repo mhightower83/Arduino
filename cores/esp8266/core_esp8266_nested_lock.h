@@ -19,7 +19,7 @@
  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-#ifndef _CORE_ESP8266_NESTED_LOCK
+#if !defined(_CORE_ESP8266_NESTED_LOCK)
 #define _CORE_ESP8266_NESTED_LOCK
 
 #ifndef xt_rsr_ps

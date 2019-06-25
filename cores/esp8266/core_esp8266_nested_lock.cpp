@@ -23,6 +23,7 @@ Copyright (c) 2019 Michael Hightgower. All rights reserved.
 #include "Esp.h"
 #include "core_esp8266_nested_lock.h"
 
+#if defined(_CORE_ESP8266_NESTED_LOCK)
 extern "C" {
 int postmortem_printf(const char *str, ...) __attribute__((format(printf, 1, 2)));
 // void inflight_stack_trace(uint32_t ps);
@@ -466,3 +467,4 @@ __real_ets_intr_unlock();
 #endif  // #if WRAP_ETS_INTR_LOCK
 
 }; // extern "C" {
+#endif // #if defined(_CORE_ESP8266_NESTED_LOCK)

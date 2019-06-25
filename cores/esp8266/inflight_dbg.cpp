@@ -1,4 +1,4 @@
-#if 0
+
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -15,6 +15,7 @@
 #include "Esp.h"
 #include "inflight_dbg.h"
 
+#if defined(_INFLIGHT_DBG_H)
 #ifndef xt_rsr_ps
 #define xt_rsr_ps()  (__extension__({uint32_t state; __asm__ __volatile__("rsr.ps %0;" : "=a" (state)); state;}))
 #endif
