@@ -31,12 +31,10 @@ int Stream::timedRead() {
     _startMillis = millis();
     do {
         c = read();
-#if LOCAL_CORE_ASYNC_FIXES
-        if(c >= 0 || _timeout == 0)
-#else
         if(c >= 0)
-#endif
             return c;
+        if(_timeout == 0)
+            return -1;
         yield();
     } while(millis() - _startMillis < _timeout);
     return -1;     // -1 indicates timeout
@@ -48,12 +46,10 @@ int Stream::timedPeek() {
     _startMillis = millis();
     do {
         c = peek();
-#if LOCAL_CORE_ASYNC_FIXES
-        if(c >= 0 || _timeout == 0)
-#else
         if(c >= 0)
-#endif
             return c;
+        if(_timeout == 0)
+            return -1;
         yield();
     } while(millis() - _startMillis < _timeout);
     return -1;     // -1 indicates timeout
