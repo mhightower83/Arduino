@@ -502,7 +502,7 @@ extern "C" {
 
 #include <esp8266_peri.h>
 
-#if (UMM_ALT_CRITICAL_METHOD == 2)
+#ifdef UMM_CRITICAL_METHOD_ANALYZE
 static struct _UMM_TIME_STATS time_stats = {
   {0xFFFFFFFF, 0U, 0U, 0U},
   {0xFFFFFFFF, 0U, 0U, 0U},

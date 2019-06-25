@@ -118,9 +118,7 @@ extern char _heap_start;
  */
 
 #define DEFAULT_INTR_DISABLE_LEVEL 3
-#define UMM_ALT_CRITICAL_METHOD 2
-
-#if (UMM_ALT_CRITICAL_METHOD == 1) || (UMM_ALT_CRITICAL_METHOD == 2)
+#define UMM_CRITICAL_METHOD_ANALYZE
 
 #ifndef __STRINGIFY
 #define __STRINGIFY(a) #a
@@ -147,18 +145,17 @@ extern char _heap_start;
             "rsync\n" \
             : : "a" (__tmp) : "memory" ); \
     } while(false)
-#endif
 
-#if (UMM_ALT_CRITICAL_METHOD == 1)
+#if !defined(UMM_CRITICAL_METHOD_ANALYZE)
 // This method preserves the higher intlevel on entry and restores the
 // original intlevel at exit.
 #define UMM_CRITICAL_DECL(tag) uint32_t _saved_ps_##tag
 #define UMM_CRITICAL_ENTRY(tag) _saved_ps_##tag = XTOS_SET_MIN_INTLEVEL(DEFAULT_INTR_DISABLE_LEVEL)
 #define UMM_CRITICAL_EXIT(tag) XTOS_RESTORE_INTLEVEL(_saved_ps_##tag)
 
-#elif (UMM_ALT_CRITICAL_METHOD == 2)
+#else
 // This options allows the gathering of data to evaluate the behavior of
-// the system and the performance of method 1
+// the system and performance.
 #define UMM_TIME_DATA 1
 
 typedef struct _TIME_STAT {
@@ -209,43 +206,7 @@ static inline void _critical_exit(time_stat_t *p, uint32_t *saved_ps) {
 #define UMM_CRITICAL_ENTRY(tag) _critical_entry(&time_stats.tag, &_saved_ps_##tag)
 #define UMM_CRITICAL_EXIT(tag) _critical_exit(&time_stats.tag, &_saved_ps_##tag)
 
-// #if (UMM_ALT_CRITICAL_METHOD == 2)
-// static struct _UMM_TIME_STATS time_stats = {
-//   {0xFFFFFFFF, 0U, 0U, 0U},
-//   {0xFFFFFFFF, 0U, 0U, 0U},
-//   {0xFFFFFFFF, 0U, 0U, 0U},
-//   {0xFFFFFFFF, 0U, 0U, 0U},
-//   {0xFFFFFFFF, 0U, 0U, 0U} };
-//
-// bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size) {
-//     if (p && size != 0) {
-//         uint32_t save_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_INTR_DISABLE_LEVEL);
-//         memcpy(p, &time_stats, size);
-//         XTOS_RESTORE_INTLEVEL(save_ps);
-//         return true;
-//     }
-//     return false;
-// }
-// #endif
-
 #endif
-
-#if !defined(UMM_ALT_CRITICAL_METHOD) || (UMM_ALT_CRITICAL_METHOD == 0)
-
-#define UMM_CRITICAL_DECL(tag)
-
-// Use the ESP8266 SDK ets_intr_lock/ets_intr_unlock
-// ets_intr_unlock() will enable interrupts even if they were off when
-// ets_intr_lock() was called.
-#if WRAP_ETS_INTR_LOCK
-#define UMM_CRITICAL_ENTRY(tag) __wrap_ets_intr_lock()
-#define UMM_CRITICAL_EXIT(tag)  __wrap_ets_intr_unlock()
-
-#else // #if WRAP_ETS_INTR_LOCK
-#define UMM_CRITICAL_ENTRY(tag) ets_intr_lock()
-#define UMM_CRITICAL_EXIT(tag)  ets_intr_unlock()
-#endif // #if WRAP_ETS_INTR_LOCK
-#endif // #if !defined(UMM_ALT_CRITICAL_METHOD) || (UMM_ALT_CRITICAL_METHOD == 0)
 
 /*
  * -D UMM_INTEGRITY_CHECK :
