@@ -545,7 +545,7 @@ int _sz_printf_P(const size_t buf_len, const char *fmt, ...) {
     uart_buff_switch(0U);
   }
 #else
-  uart_buff_switch(0U); // This will clear RX FIFO
+  uart_buff_switch(0U); // This will also clear RX FIFO
 #endif
 
   char __aligned(4) ram_buf[buf_len];
