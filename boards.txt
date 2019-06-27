@@ -967,7 +967,6 @@ huzzah.menu.baud.921600=921600
 huzzah.menu.baud.921600.upload.speed=921600
 
 ##############################################################
-<<<<<<< HEAD
 sonoff.name=ITEAD Sonoff
 sonoff.menu.BoardModel.sonoffS20=ITEAD Sonoff S20
 sonoff.menu.BoardModel.sonoffSV=ITEAD Sonoff SV
