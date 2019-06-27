@@ -583,6 +583,7 @@ extern int umm_last_fail_alloc_size;
 // This macro resulted in a crash when calling umm_info(..., true);
 // Macro to place constant strings into PROGMEM and print them properly
 // #define printf(fmt, ...)  do { static const char fstr[] PROGMEM = fmt; char rstr[sizeof(fmt)]; for (size_t i=0; i<sizeof(rstr); i++) rstr[i] = fstr[i]; printf(rstr, ##__VA_ARGS__); } while (0)
+// #define printf(fmt, ...) printf(PSTR(fmt), ## __VA_ARGS__ )
 
 /* -- dbglog {{{ */
 

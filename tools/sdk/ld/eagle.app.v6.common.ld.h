@@ -136,7 +136,7 @@ SECTIONS
     _irom0_text_start = ABSOLUTE(.);
     *(.ver_number)
     *.c.o(.literal*, .text*)
-    *.cpp.o( EXCLUDE_FILE (umm_malloc.cpp.o) .literal*, EXCLUDE_FILE (umm_malloc.cpp.o) .text* )
+    *.cpp.o(EXCLUDE_FILE (umm_malloc.cpp.o) .literal*, EXCLUDE_FILE (umm_malloc.cpp.o) .text*)
     *.cc.o(.literal*, .text*)
 #ifdef VTABLES_IN_FLASH
     *(.rodata._ZTV*) /* C++ vtables */

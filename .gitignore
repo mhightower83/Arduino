@@ -2,6 +2,7 @@
 tools/dist/
 tools/xtensa-lx106-elf/
 tools/mkspiffs/
+tools/mklittlefs/
 tools/python/
 package/versions/
 exclude.txt
@@ -25,3 +26,10 @@ boards.local.txt
 *.gcda
 *.o
 *.a
+
+#Ignore files built by Visual Studio/Visual Micro
+[Dd]ebug*/
+[Rr]elease*/
+.vs/
+__vm/
+*.vcxproj*
