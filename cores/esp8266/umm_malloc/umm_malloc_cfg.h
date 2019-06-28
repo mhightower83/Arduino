@@ -6,16 +6,9 @@
 #define _UMM_MALLOC_CFG_H
 
 #include <debug.h>
-//D #include <Esp.h>
-//D #include <core_esp8266_nested_lock.h>
-
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-//D int postmortem_printf(const char *str, ...) __attribute__((format(printf, 1, 2)));
-//D void inflight_stack_trace(uint32_t ps);
 
 #include <stdlib.h>
 #include <osapi.h>
@@ -118,19 +111,21 @@ extern char _heap_start;
  */
 
 #define DEFAULT_INTR_DISABLE_LEVEL 3
-#define UMM_CRITICAL_METHOD_ANALYZE
+#define UMM_CRITICAL_PERIOD_ANALYZE
 
 #ifndef __STRINGIFY
 #define __STRINGIFY(a) #a
 #endif
 
+// These are based off the ones in:
+// .../ESP8266_RTOS_SDK/components/esp8266/include/xtensa/xtruntime.h
 #define XTOS_SET_MIN_INTLEVEL(intlevel) \
     ({ \
         unsigned __tmp, __tmp2, __tmp3; \
         __asm__ __volatile__( \
-            "rsr.ps %0\n" /* get old (current) PS.INTLEVEL */ \
+            "rsr.ps %0\n" \
             "movi   %2, " __STRINGIFY(intlevel) "\n" \
-            "extui  %1, %0, 0, 4\n"   /* keep only INTLEVEL bits of parameter */ \
+            "extui  %1, %0, 0, 4\n" \
             "blt    %2, %1, 1f\n" \
             "rsil   %0, " __STRINGIFY(intlevel) "\n" \
             "1:\n" \
@@ -146,7 +141,7 @@ extern char _heap_start;
             : : "a" (__tmp) : "memory" ); \
     } while(false)
 
-#if !defined(UMM_CRITICAL_METHOD_ANALYZE)
+#if !defined(UMM_CRITICAL_PERIOD_ANALYZE)
 // This method preserves the higher intlevel on entry and restores the
 // original intlevel at exit.
 #define UMM_CRITICAL_DECL(tag) uint32_t _saved_ps_##tag
@@ -154,10 +149,7 @@ extern char _heap_start;
 #define UMM_CRITICAL_EXIT(tag) XTOS_RESTORE_INTLEVEL(_saved_ps_##tag)
 
 #else
-// This options allows the gathering of data to evaluate the behavior of
-// the system and performance.
-#define UMM_TIME_DATA 1
-
+// This option adds support for gathering timing data
 typedef struct _TIME_STAT {
   uint32_t min;
   uint32_t max;
@@ -251,17 +243,6 @@ static inline void _critical_exit(time_stat_t *p, uint32_t *saved_ps) {
  *
  * If poison corruption is detected, the message is printed and user-provided
  * callback is called: `UMM_HEAP_CORRUPTION_CB()`
- */
-
-/*
- * -D UMM_PADDED :
- *
- * Uses UMM_POISON_SIZE_BEFORE, UMM_POISON_SIZE_AFTER, and
- * UMM_POISONED_BLOCK_LEN_TYPE sizes to pad around the memory allocation.
- * Keeping the memory footprint the same as when -D UMM_POISON was used.
- *
- * Not real useful. Used to rule out timeing as an issue when things
- * seemed to work when UMM_POISON was used.
  */
 
 #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)

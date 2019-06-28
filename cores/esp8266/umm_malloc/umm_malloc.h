@@ -45,7 +45,6 @@ void umm_free( void *ptr );
 size_t umm_free_heap_size( void );
 size_t umm_max_block_size( void );
 size_t umm_block_size( void );
-size_t umm_fast_free_heap_size( void );
 
 #ifdef __cplusplus
 }

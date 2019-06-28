@@ -494,15 +494,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <pgmspace.h>
+
 #include "umm_malloc.h"
 
 #include "umm_malloc_cfg.h"   /* user-dependent */
 
 extern "C" {
 
-#include <esp8266_peri.h>
-
-#ifdef UMM_CRITICAL_METHOD_ANALYZE
+#ifdef UMM_CRITICAL_PERIOD_ANALYZE
 static struct _UMM_TIME_STATS time_stats = {
   {0xFFFFFFFF, 0U, 0U, 0U},
   {0xFFFFFFFF, 0U, 0U, 0U},
@@ -521,7 +520,25 @@ bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t s
 }
 #endif
 
-#if 1 //defined(DEBUG_ESP_PORT) && ( defined(DEBUG_ESP_CORE) || defined(DEBUG_ESP_OOM) )
+// From UMM, the last caller of a malloc/realloc/calloc which failed:
+extern void *umm_last_fail_alloc_addr;
+extern int umm_last_fail_alloc_size;
+
+#ifndef UMM_FIRST_FIT
+#  ifndef UMM_BEST_FIT
+#    define UMM_BEST_FIT
+#  endif
+#endif
+
+#ifndef DBG_LOG_LEVEL
+#  undef  DBG_LOG_LEVEL
+#  define DBG_LOG_LEVEL 0
+#else
+#  undef  DBG_LOG_LEVEL
+#  define DBG_LOG_LEVEL DBG_LOG_LEVEL
+#endif
+
+#if 1
 /*
   Printing from the malloc routines is tricky. Since a lot of library calls
   will want to do malloc.
@@ -559,31 +576,10 @@ int _sz_printf_P(const size_t buf_len, const char *fmt, ...) {
 }
 
 #define printf(fmt, ...) _sz_printf_P((sizeof(fmt) + 3) & ~0x03U, PSTR(fmt), ##__VA_ARGS__)
-#endif
-
-// From UMM, the last caller of a malloc/realloc/calloc which failed:
-extern void *umm_last_fail_alloc_addr;
-extern int umm_last_fail_alloc_size;
-
-#ifndef UMM_FIRST_FIT
-#  ifndef UMM_BEST_FIT
-#    define UMM_BEST_FIT
-#  endif
-#endif
-
-#ifndef DBG_LOG_LEVEL
-#  undef  DBG_LOG_LEVEL
-#  define DBG_LOG_LEVEL 0
 #else
-#  undef  DBG_LOG_LEVEL
-#  define DBG_LOG_LEVEL DBG_LOG_LEVEL
-#endif
-
-
-// This macro resulted in a crash when calling umm_info(..., true);
 // Macro to place constant strings into PROGMEM and print them properly
-// #define printf(fmt, ...)  do { static const char fstr[] PROGMEM = fmt; char rstr[sizeof(fmt)]; for (size_t i=0; i<sizeof(rstr); i++) rstr[i] = fstr[i]; printf(rstr, ##__VA_ARGS__); } while (0)
-// #define printf(fmt, ...) printf(PSTR(fmt), ## __VA_ARGS__ )
+#define printf(fmt, ...) printf(PSTR(fmt), ## __VA_ARGS__ )
+#endif
 
 /* -- dbglog {{{ */
 
@@ -660,11 +656,8 @@ extern int umm_last_fail_alloc_size;
 #  define DBG_LOG_INFO( format, ... )
 #endif
 
-#if 1 //defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
 #define DBG_LOG_FORCE( force, format, ... ) {if(force) {printf( format, ## __VA_ARGS__  );}}
-#else
-#define DBG_LOG_FORCE( ... ) do {} while(false)
-#endif
+
 /* }}} */
 
 /* ------------------------------------------------------------------------- */
@@ -712,8 +705,10 @@ unsigned short int umm_numblocks = 0;
 #define UMM_PFREE(b)  (UMM_BLOCK(b).body.free.prev)
 #define UMM_DATA(b)   (UMM_BLOCK(b).body.data)
 
-// mjh 061019 this does not look safe no access locks.
-//
+/*
+ * This does not look safe, no access locks. It currently is not being
+ * built, so not an immediate issue. -  mjh 061019
+ */
 /* integrity check (UMM_INTEGRITY_CHECK) {{{ */
 #if defined(UMM_INTEGRITY_CHECK)
 /*
@@ -1022,33 +1017,6 @@ static void *get_unpoisoned( void *vptr ) {
 #define GET_UNPOISONED(ptr)       get_unpoisoned(ptr)
 
 #else
-#ifdef UMM_PADDED
-/*
- * Integrity check is disabled, but keep buffer zone around allocated memory.
- */
-#define POISON_SIZE(s)            (sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE +  UMM_POISON_SIZE_AFTER)
-#define CHECK_POISON_ALL_BLOCKS() 1
-
-static void *get_poisoned( void *vptr, size_t size_w_poison ) {
-  unsigned char *ptr = (unsigned char *)vptr;
-  if (size_w_poison != 0 && ptr != NULL) {
-    ptr += sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE;
-  }
-
-  return ptr;
-}
-
-static void *get_unpoisoned( void *vptr ) {
-  unsigned char *ptr = (unsigned char *)vptr;
-  if (ptr != NULL) {
-    ptr -= sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE;
-  }
-
-  return ptr;
-}
-#define GET_POISONED(ptr, size)   get_poisoned(ptr, size)
-#define GET_UNPOISONED(ptr)       get_unpoisoned(ptr)
-#else
 /*
  * Integrity check is disabled, so just define stub macros
  */
@@ -1056,7 +1024,6 @@ static void *get_unpoisoned( void *vptr ) {
 #define CHECK_POISON_ALL_BLOCKS() 1
 #define GET_POISONED(ptr, size)   (ptr)
 #define GET_UNPOISONED(ptr)       (ptr)
-#endif
 #endif
 /* }}} */
 
@@ -1077,10 +1044,7 @@ static void *get_unpoisoned( void *vptr ) {
 
 UMM_HEAP_INFO ummHeapInfo;
 
-// #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
-ICACHE_FLASH_ATTR
-// #endif
-void * umm_info( void *ptr, int force ) {
+void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
   UMM_CRITICAL_DECL(id_info);
 
   unsigned short int blockNo = 0;
@@ -1208,50 +1172,6 @@ void * umm_info( void *ptr, int force ) {
   UMM_CRITICAL_EXIT(id_info);
 
   return( NULL );
-}
-
-size_t umm_fast_free_heap_size( void ) {
-  UMM_CRITICAL_DECL(id_fast_free);
-
-  unsigned short int blockNo = 0;
-
-  if (umm_heap == NULL) {
-      umm_init();
-  }
-
-  unsigned short int freeBlocks = 0;
-
-  /* Protect the critical section... */
-  UMM_CRITICAL_ENTRY(id_fast_free);
-
-  /*
-   * Now loop through the block lists, and the size
-   * of free blocks. The terminating condition is an nb pointer with
-   * a value of zero...
-   */
-
-  blockNo = UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK;
-
-  while( UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK ) {
-    size_t curBlocks = (UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK )-blockNo;
-
-    /* Is this a free block? */
-
-    if( UMM_NBLOCK(blockNo) & UMM_FREELIST_MASK )
-      freeBlocks += curBlocks;
-
-    blockNo = UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK;
-  }
-  /* Release the critical section... */
-  UMM_CRITICAL_EXIT(id_fast_free);
-
-  /*
-   * Update the total with information from the last block, the
-   * rest must be free!
-   */
-  freeBlocks  += UMM_NUMBLOCKS-blockNo;
-
-  return (size_t)freeBlocks * sizeof(umm_block);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -1431,18 +1351,16 @@ static void _umm_free( void *ptr ) {
    *        on the free list!
    */
 
-  /* Protect the critical section... */
-  //++ UMM_CRITICAL_ENTRY(id_free);
-
   /* Figure out which block we're in. Note the use of truncated division... */
 
   c = (((char *)ptr)-(char *)(&(umm_heap[0])))/sizeof(umm_block);
 
+  /* Protect the critical section... */
+  UMM_CRITICAL_ENTRY(id_free);
+
   DBG_LOG_DEBUG( "Freeing block %6d\n", c );
 
   /* Now let's assimilate this block with the next one if possible. */
-
-  UMM_CRITICAL_ENTRY(id_free);
 
   umm_assimilate_up( c );
 
@@ -1478,7 +1396,7 @@ static void _umm_free( void *ptr ) {
    * here for posterity.
    */
 
-  if(0 == UMM_NBLOCK(UMM_NBLOCK(c) & UMM_BLOCKNO_MASK ) ) {
+  if( 0 == UMM_NBLOCK(UMM_NBLOCK(c) & UMM_BLOCKNO_MASK ) ) {
 
     if( UMM_PBLOCK(UMM_NBLOCK(c) & UMM_BLOCKNO_MASK) != UMM_PFREE(UMM_NBLOCK(c) & UMM_BLOCKNO_MASK) ) {
       UMM_NFREE(UMM_PFREE(UMM_NBLOCK(c) & UMM_BLOCKNO_MASK)) = c;
@@ -1526,9 +1444,6 @@ static void *_umm_malloc( size_t size ) {
     return( (void *)NULL );
   }
 
-  /* Protect the critical section... */
-  //++ UMM_CRITICAL_ENTRY(id_malloc);
-
   blocks = umm_blocks( size );
 
   /*
@@ -1539,7 +1454,8 @@ static void *_umm_malloc( size_t size ) {
    * algorithm
    */
 
-  UMM_CRITICAL_ENTRY(id_malloc); //-- moved
+  /* Protect the critical section... */
+  UMM_CRITICAL_ENTRY(id_malloc);
 
   cf = UMM_NFREE(0);
 
@@ -1674,8 +1590,18 @@ static void *_umm_realloc( void *ptr, size_t size ) {
     return( (void *)NULL );
   }
 
-  /* Protect the critical section... */
-  //++ UMM_CRITICAL_ENTRY(id_realloc);  //?? can we move this down ??
+  /*
+   * Defer starting critical section.
+   * Initially we should be safe without a critical section as long as we are
+   * referencing values that are a part of defining our allocation within our
+   * allocation. For example UMM_NBLOCK() returns an address of the next block;
+   * however, the calculation is all based on information within our allocation.
+   * As long as we don't try to modify the next block or walk the chain of
+   * blocks we are okay.
+   *
+   * The caller if reentered must insure that we are never called to reallocate
+   * the block we are actively working on.
+   */
 
   /*
    * Otherwise we need to actually do a reallocation. A naiive approach
@@ -1694,8 +1620,6 @@ static void *_umm_realloc( void *ptr, size_t size ) {
 
   /* Figure out how big this block is... */
 
-  //?? This should be safe, because we are only working with the boundarys
-  //?? of our allocation. No need for lock here. - mjh 061019
   blockSize = (UMM_NBLOCK(c) - c);
 
   /* Figure out how many bytes are in this block */
@@ -1713,13 +1637,10 @@ static void *_umm_realloc( void *ptr, size_t size ) {
 
     DBG_LOG_DEBUG( "realloc the same size block - %d, do nothing\n", blocks );
 
-    // /* Release the critical section... */
-    // UMM_CRITICAL_EXIT(id_realloc);
-
     return( ptr );
   }
 
-  //?? move critical to here
+  /* Now we need a critical section... */
   UMM_CRITICAL_ENTRY(id_realloc);
 
   /*
@@ -1738,10 +1659,7 @@ static void *_umm_realloc( void *ptr, size_t size ) {
    * new request! If this block of code runs, then the new block will
    * either fit the request exactly, or be larger than the request.
    */
-//? Note he does not check if the previous umm_assimilate_up grew the alloc
-//? enough to satisfy the request. If the downward block is available it is
-//? grown more and moved. This has the effect to compacting the heap reducing
-//? fragmentation. - I assume this was part of Bill Dittman's optimizations.
+
   if( (UMM_NBLOCK(UMM_PBLOCK(c)) & UMM_FREELIST_MASK) &&
       (blocks <= (UMM_NBLOCK(c)-UMM_PBLOCK(c)))    ) {
 
@@ -1761,23 +1679,24 @@ static void *_umm_realloc( void *ptr, size_t size ) {
     c = umm_assimilate_down(c, 0);
 
     /*
+     * For the ESP8266 interrupts should not be off for more than 10us.
+     * An unprotect/protect around memmove should be safe to do here.
+     * All variables used are on the stack.
+     */
+    UMM_CRITICAL_EXIT(id_realloc);
+
+    /*
      * Move the bytes down to the new block we just created, but be sure to move
      * only the original bytes.
      */
-//? can we safely turn on interrupts here?
-//? No - as part of the optimizations done by Bill Dittman the current
-//? allocation at this moment may be over sized. Thus more activity, that needs
-//? protection, may be done to release extra blocks.
-//? To try and keep interrupts off for <10us an unprotect/protect arround the
-//? memmove may be safe. All variables used are on the stack.
-    UMM_CRITICAL_EXIT(id_realloc); // added mjh May 23, 2019
+
     memmove( (void *)&UMM_DATA(c), ptr, curSize );
 
     /* And don't forget to adjust the pointer to the new block location! */
 
     ptr    = (void *)&UMM_DATA(c);
 
-    UMM_CRITICAL_ENTRY(id_realloc); // added
+    UMM_CRITICAL_ENTRY(id_realloc);
   }
 
   /* Now calculate the block size again...and we'll have three cases */
@@ -1798,17 +1717,13 @@ static void *_umm_realloc( void *ptr, size_t size ) {
     DBG_LOG_DEBUG( "realloc %d to a smaller block %d, shrink and free the leftover bits\n", blockSize, blocks );
 
     umm_make_new_block( c, blocks, 0, 0 );
-    //?? is it safe to unlock here ??
-    // TODO: Confirm the current block and this new block are in an issolated
-    // like state. As if they were allocated. That being the case we should
-    // be able to safely do a critical exit here before free, etc.
-    // Reducing the interrupt lockout period.
+
     UMM_CRITICAL_EXIT(id_realloc);
 
     _umm_free( (void *)&UMM_DATA(c+blocks) );
 
     return( ptr );
-    //? intlevel=0, looks okay - we are on our way out from here
+
   } else {
     /* New block is bigger than the old block... */
 
@@ -1821,12 +1736,11 @@ static void *_umm_realloc( void *ptr, size_t size ) {
      * free up the old block, but only if the malloc was sucessful!
      */
 
-    UMM_CRITICAL_EXIT(id_realloc); // added mjh May 23, 2019
+    UMM_CRITICAL_EXIT(id_realloc);
+
     if( (ptr = _umm_malloc( size )) ) {
-      //? old behavior intlevel=0, looks okay - we are on our way out from here
       memcpy( ptr, oldptr, curSize );
       _umm_free( oldptr );
-      // UMM_CRITICAL_ENTRY(saved_ps);
     }
     return( ptr );
 
