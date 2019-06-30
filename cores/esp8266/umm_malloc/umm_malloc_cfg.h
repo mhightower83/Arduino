@@ -162,7 +162,6 @@ struct _UMM_TIME_STATS {
   time_stat_t id_realloc;
   time_stat_t id_free;
   time_stat_t id_info;
-  time_stat_t id_fast_free;
 };
 
 bool get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size);

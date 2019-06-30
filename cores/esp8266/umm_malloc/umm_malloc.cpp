@@ -498,12 +498,12 @@
 #include "umm_malloc.h"
 
 #include "umm_malloc_cfg.h"   /* user-dependent */
+//D #include <assert.h>
 
 extern "C" {
 
 #ifdef UMM_CRITICAL_PERIOD_ANALYZE
 static struct _UMM_TIME_STATS time_stats = {
-  {0xFFFFFFFF, 0U, 0U, 0U},
   {0xFFFFFFFF, 0U, 0U, 0U},
   {0xFFFFFFFF, 0U, 0U, 0U},
   {0xFFFFFFFF, 0U, 0U, 0U},
@@ -549,7 +549,7 @@ extern int umm_last_fail_alloc_size;
 
 // ROM _putc1, ignores CRs and sends CR/LF for LF, newline.
 // Always returns character sent.
-constexpr int (*_putc1)(int) = (int (*)(int))0x40001dcc;
+int constexpr (*_putc1)(int) = (int (*)(int))0x40001dcc;
 void uart_buff_switch(uint8_t);
 
 int _sz_printf_P(const size_t buf_len, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -1043,6 +1043,7 @@ static void *get_unpoisoned( void *vptr ) {
  */
 
 UMM_HEAP_INFO ummHeapInfo;
+unsigned short int ummHeapFreeBlocks;
 
 void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
   UMM_CRITICAL_DECL(id_info);
@@ -1149,6 +1150,8 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
     }
   }
 
+//D // This is a good place to verify we are calculating correctly
+//D assert(ummHeapFreeBlocks == ummHeapInfo.freeBlocks);
   DBG_LOG_FORCE( force, "|0x%08lx|B %5d|NB %5d|PB %5d|Z %5d|NF %5d|PF %5d|\n",
       (unsigned long)(&UMM_BLOCK(blockNo)),
       blockNo,
@@ -1287,6 +1290,9 @@ void ICACHE_FLASH_ATTR umm_init( void ) {
     /* index of the latest `umm_block` */
     const unsigned short int block_last = UMM_NUMBLOCKS - 1;
 
+    /* init heapFreeBlocks */
+    ummHeapFreeBlocks = block_last;
+
     /* setup the 0th `umm_block`, which just points to the 1st */
     UMM_NBLOCK(block_0th) = block_1th;
     UMM_NFREE(block_0th)  = block_1th;
@@ -1359,6 +1365,9 @@ static void _umm_free( void *ptr ) {
   UMM_CRITICAL_ENTRY(id_free);
 
   DBG_LOG_DEBUG( "Freeing block %6d\n", c );
+
+  /* Update dynamic Free Block count */
+  ummHeapFreeBlocks += (UMM_NBLOCK(c) - c);
 
   /* Now let's assimilate this block with the next one if possible. */
 
@@ -1529,6 +1538,10 @@ static void *_umm_malloc( size_t size ) {
       UMM_PFREE( UMM_NFREE(cf) ) = cf + blocks;
       UMM_NFREE( cf + blocks ) = UMM_NFREE(cf);
     }
+
+    /* Update dynamic Free Block count */
+    ummHeapFreeBlocks -= blocks;
+
   } else {
     /* Out of memory */
 
@@ -1699,9 +1712,14 @@ static void *_umm_realloc( void *ptr, size_t size ) {
     UMM_CRITICAL_ENTRY(id_realloc);
   }
 
+  unsigned short int previousBlockSize = blockSize;
+
   /* Now calculate the block size again...and we'll have three cases */
 
   blockSize = (UMM_NBLOCK(c) - c);
+
+  /* Update dynamic Free Block count */
+  ummHeapFreeBlocks -= (blockSize - previousBlockSize);
 
   if( blockSize == blocks ) {
     /* This space intentionally left blank - return the original pointer! */
@@ -1860,11 +1878,16 @@ void umm_free( void *ptr ) {
 }
 
 /* ------------------------------------------------------------------------ */
-
+//D #if 1
 size_t ICACHE_FLASH_ATTR umm_free_heap_size( void ) {
-  umm_info(NULL, 0);
-  return (size_t)ummHeapInfo.freeBlocks * sizeof(umm_block);
+  return (size_t)ummHeapFreeBlocks * sizeof(umm_block);
 }
+//D #else
+//D size_t ICACHE_FLASH_ATTR umm_free_heap_size( void ) {
+//D   umm_info(NULL, 0);
+//D   return (size_t)ummHeapInfo.freeBlocks * sizeof(umm_block);
+//D }
+//D #endif
 
 size_t ICACHE_FLASH_ATTR umm_max_block_size( void ) {
   umm_info(NULL, 0);
