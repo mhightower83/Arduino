@@ -117,8 +117,23 @@ extern char _heap_start;
 #define __STRINGIFY(a) #a
 #endif
 
-// These are based off the ones in:
-// .../ESP8266_RTOS_SDK/components/esp8266/include/xtensa/xtruntime.h
+/*
+  The following is adapted from the ESP8266_RTOS_SDK's xtruntime.h
+  [xtensa copyright/license](https://github.com/espressif/ESP8266_RTOS_SDK/blob/735111069bab94866b6ee3566144007a91c217f6/components/esp8266/include/xtensa/xtruntime.h#L1-L24)
+  [xtruntime.h](https://github.com/espressif/ESP8266_RTOS_SDK/blob/735111069bab94866b6ee3566144007a91c217f6/components/esp8266/include/xtensa/xtruntime.h#L55-L93)
+ */
+ /*
+  *  A derivative work from xtensa's xruntime.h
+  *
+  *  unsigned XTOS_MIN_INTLEVEL(int intlevel);
+  *  This macro conditionally sets a new interrupt level,
+  *  when 'intlevel' is greater then the interrupt level
+  *  present at the start of the call.
+  *  The 'intlevel' parameter must be a constant.
+  *  This macro returns a 32-bit value that must be passed to
+  *  XTOS_RESTORE_INTLEVEL(unsigned restoreval) to restore
+  *  the previous interrupt level.
+  */
 #define XTOS_SET_MIN_INTLEVEL(intlevel) \
     ({ \
         unsigned __tmp, __tmp2, __tmp3; \
