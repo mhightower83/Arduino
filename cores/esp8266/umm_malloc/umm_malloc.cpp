@@ -511,7 +511,7 @@ static struct _UMM_TIME_STATS time_stats = {
 
 bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size) {
     if (p && size != 0) {
-        uint32_t save_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_INTR_DISABLE_LEVEL);
+        uint32_t save_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_CRITICAL_SECTION_INTLEVEL);
         memcpy(p, &time_stats, size);
         XTOS_RESTORE_INTLEVEL(save_ps);
         return true;

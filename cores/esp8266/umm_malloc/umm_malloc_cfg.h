@@ -110,7 +110,10 @@ extern char _heap_start;
  * called from within umm_malloc()
  */
 
-#define DEFAULT_INTR_DISABLE_LEVEL 3
+#ifndef DEFAULT_CRITICAL_SECTION_INTLEVEL
+#define DEFAULT_CRITICAL_SECTION_INTLEVEL 3
+#endif
+
 #define UMM_CRITICAL_PERIOD_ANALYZE
 
 #ifndef __STRINGIFY
@@ -160,7 +163,7 @@ extern char _heap_start;
 // This method preserves the higher intlevel on entry and restores the
 // original intlevel at exit.
 #define UMM_CRITICAL_DECL(tag) uint32_t _saved_ps_##tag
-#define UMM_CRITICAL_ENTRY(tag) _saved_ps_##tag = XTOS_SET_MIN_INTLEVEL(DEFAULT_INTR_DISABLE_LEVEL)
+#define UMM_CRITICAL_ENTRY(tag) _saved_ps_##tag = XTOS_SET_MIN_INTLEVEL(DEFAULT_CRITICAL_SECTION_INTLEVEL)
 #define UMM_CRITICAL_EXIT(tag) XTOS_RESTORE_INTLEVEL(_saved_ps_##tag)
 
 #else
@@ -183,12 +186,12 @@ bool get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size);
 
 static inline ICACHE_RAM_ATTR uint32_t GetCycleCount() {
   uint32_t ccount;
-  __asm__ __volatile__("esync; rsr %0,ccount":"=a"(ccount));
+  __asm__ __volatile__("esync; rsr %0,ccount":"=a"(ccount)::"memory");
   return ccount;
 }
 
 static inline void _critical_entry(time_stat_t *p, uint32_t *saved_ps) {
-    *saved_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_INTR_DISABLE_LEVEL);
+    *saved_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_CRITICAL_SECTION_INTLEVEL);
     if (0U != (*saved_ps & 0x0FU)) {
         p->intlevel += 1U;
         // inflight_stack_trace(*saved_ps);
