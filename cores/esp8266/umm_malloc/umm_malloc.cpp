@@ -538,9 +538,38 @@ extern int umm_last_fail_alloc_size;
 #  define DBG_LOG_LEVEL DBG_LOG_LEVEL
 #endif
 
+/*
+Changes:
+
+  Correct critical section with interrupt level preserving and nest support
+  alternative. Replace ets_intr_lock()/ets_intr_unlock() with
+  uint32_t oldValue=xt_rsil(3)/xt_wrs(oldValue)
+
+  Replace printf with something that is ROM or IRAM based so that a printf
+  that occurs during an ISR malloc/new does not cause a crash. To avoid a
+  reentry issue it should also avoid doing malloc lib calls
+
+  Refactor realloc to avoid memcpy/memmove while in critical section. This is
+  only effective when realloc is called with interrupts enabled. The copy
+  process allone can take over 10us (when coping more than ~498 bytes with a
+  80MHz CPU clock). It would be a good practice for an ISR to avoid realloc.
+
+  I have clocked umm_info critical lock time taking as much as 180us. A common
+  use fot the umm_info call is to get the free heap result. It is common
+  to try and closely monitor free heap as a method to detect memory leaks.
+  This may results in frequent calls to umm_info. There has not been a clear
+  test case that shows an issue yet; however, I and others think they are or
+  have had crashes related to this.
+
+  I have added code that adjust the running free heap number
+  from _umm_malloc, _umm_realloc, and _umm_free. Removing the need to do a
+  long interrupts disabled calculation via _umm_info.
+
+ */
+
 #if 1
 /*
-  Printing from the malloc routines is tricky. Since a lot of library calls
+   Printing from the malloc routines is tricky. Since a lot of library calls
   will want to do malloc.
 
   Objective:  To be able to print "last gasp" diagnostic messages
@@ -1605,10 +1634,17 @@ static void *_umm_realloc( void *ptr, size_t size ) {
 
   /*
    * Defer starting critical section.
+   *
    * Initially we should be safe without a critical section as long as we are
-   * referencing values that are a part of defining our allocation within our
-   * allocation. For example UMM_NBLOCK() returns an address of the next block;
-   * however, the calculation is all based on information within our allocation.
+   * referencing values that are within our allocation as constants.
+   , And only reference values that would not change due to redefintion of the
+   * allocations that are around us.
+   *
+   * Example UMM_PBLOCK() could be change by a call to malloc from an ISR.
+   * On the other hand UMM_NBLOCK() is safe returns an address of the next
+   * block. The calculation is all based on information within our allocation
+   * that remains constant, until we change it.
+   *
    * As long as we don't try to modify the next block or walk the chain of
    * blocks we are okay.
    *
