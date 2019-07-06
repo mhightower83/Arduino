@@ -98,7 +98,7 @@ extern void custom_crash_callback( struct rst_info * rst_info, uint32_t stack, u
 // #define WDT_TIME_TO_FEED (400000*clockCyclesPerMicrosecond())
 // ROM _putc1, ignores CRs and sends CR/LF for LF, newline.
 // Always returns character sent.
-constexpr int (*_putc1)(int) = (int (*)(int))0x40001dcc;
+int constexpr (*_putc1)(int) = (int (*)(int))0x40001dcc;
 void uart_buff_switch(uint8_t);
 
 // Prints need to use our library function to allow for file and function

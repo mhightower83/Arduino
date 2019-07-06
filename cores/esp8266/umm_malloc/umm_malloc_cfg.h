@@ -110,14 +110,31 @@ extern char _heap_start;
  * called from within umm_malloc()
  */
 
+/*
+  Per Devyte, the core currently doesn't support masking a specific interrupt
+  level. That doesn't mean it can't be implemented, only that at this time
+  locking is implemented as all or nothing.
+  https://github.com/esp8266/Arduino/issues/6246#issuecomment-508612609
+
+  So for now we default to all, 15.
+ */
 #ifndef DEFAULT_CRITICAL_SECTION_INTLEVEL
-#define DEFAULT_CRITICAL_SECTION_INTLEVEL 3
+#define DEFAULT_CRITICAL_SECTION_INTLEVEL 15
 #endif
 
 #define UMM_CRITICAL_PERIOD_ANALYZE
 
 #ifndef __STRINGIFY
 #define __STRINGIFY(a) #a
+#endif
+/*
+  Copy paste xt_rsil and xt_wsr_ps from Arduino.h
+ */
+#ifndef xt_rsil
+#define xt_rsil(level) (__extension__({uint32_t state; __asm__ __volatile__("rsil %0," __STRINGIFY(level) : "=a" (state)); state;}))
+#endif
+#ifndef xt_wsr_ps
+#define xt_wsr_ps(state)  __asm__ __volatile__("wsr %0,ps; isync" :: "a" (state) : "memory")
 #endif
 
 /*
@@ -163,11 +180,16 @@ extern char _heap_start;
 // This method preserves the higher intlevel on entry and restores the
 // original intlevel at exit.
 #define UMM_CRITICAL_DECL(tag) uint32_t _saved_ps_##tag
-#define UMM_CRITICAL_ENTRY(tag) _saved_ps_##tag = XTOS_SET_MIN_INTLEVEL(DEFAULT_CRITICAL_SECTION_INTLEVEL)
-#define UMM_CRITICAL_EXIT(tag) XTOS_RESTORE_INTLEVEL(_saved_ps_##tag)
+
+//D #define UMM_CRITICAL_ENTRY(tag) _saved_ps_##tag = XTOS_SET_MIN_INTLEVEL(DEFAULT_CRITICAL_SECTION_INTLEVEL)
+//D #define UMM_CRITICAL_EXIT(tag) XTOS_RESTORE_INTLEVEL(_saved_ps_##tag)
+#define UMM_CRITICAL_ENTRY(tag) _saved_ps_##tag = xt_rsil(DEFAULT_CRITICAL_SECTION_INTLEVEL)
+#define UMM_CRITICAL_EXIT(tag) xt_wsr_ps(_saved_ps_##tag)
+
+
 
 #else
-// This option adds support for gathering timing data
+// This option adds support for gathering time locked data
 typedef struct _TIME_STAT {
   uint32_t min;
   uint32_t max;
@@ -186,12 +208,16 @@ bool get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size);
 
 static inline ICACHE_RAM_ATTR uint32_t GetCycleCount() {
   uint32_t ccount;
-  __asm__ __volatile__("esync; rsr %0,ccount":"=a"(ccount)::"memory");
+  // Not sure esync is needed before "rsr %0,CCOUNT". I don't see it in
+  // Espressf SDK or Xtensa clock.S file.
+  //  __asm__ __volatile__("esync; rsr %0,ccount":"=a"(ccount)::"memory");
+  __asm__ __volatile__("rsr %0,ccount":"=a"(ccount)::"memory");
   return ccount;
 }
 
 static inline void _critical_entry(time_stat_t *p, uint32_t *saved_ps) {
-    *saved_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_CRITICAL_SECTION_INTLEVEL);
+//D    *saved_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_CRITICAL_SECTION_INTLEVEL);
+    *saved_ps = xt_rsil(DEFAULT_CRITICAL_SECTION_INTLEVEL);
     if (0U != (*saved_ps & 0x0FU)) {
         p->intlevel += 1U;
         // inflight_stack_trace(*saved_ps);
@@ -208,7 +234,8 @@ static inline void _critical_exit(time_stat_t *p, uint32_t *saved_ps) {
     if (elapse > p->max)
         p->max = elapse;
 
-    XTOS_RESTORE_INTLEVEL(*saved_ps);
+//D  XTOS_RESTORE_INTLEVEL(*saved_ps);
+    xt_wsr_ps(*saved_ps);
 }
 
 #define UMM_CRITICAL_DECL(tag) uint32_t _saved_ps_##tag

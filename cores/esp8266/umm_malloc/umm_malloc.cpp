@@ -565,6 +565,10 @@ Changes:
   from _umm_malloc, _umm_realloc, and _umm_free. Removing the need to do a
   long interrupts disabled calculation via _umm_info.
 
+  Some min/max time measurments for locks held while in: info, malloc,
+  realloc, and free. Also maintain count of how many times each is called with
+  INTLEVEL set.
+
  */
 
 #if 1
