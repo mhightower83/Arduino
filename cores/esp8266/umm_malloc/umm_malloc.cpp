@@ -498,7 +498,9 @@
 #include "umm_malloc.h"
 
 #include "umm_malloc_cfg.h"   /* user-dependent */
-//D #include <assert.h>
+#if defined(DEBUG_ESP_PORT)
+#include <assert.h>
+#endif
 
 extern "C" {
 
@@ -551,27 +553,34 @@ Changes:
 
   Refactor realloc to avoid memcpy/memmove while in critical section. This is
   only effective when realloc is called with interrupts enabled. The copy
-  process allone can take over 10us (when coping more than ~498 bytes with a
-  80MHz CPU clock). It would be a good practice for an ISR to avoid realloc.
+  process alone can take over 10us (when copying more than ~498 bytes with a
+  80MHz CPU clock). It would be good practice for an ISR to avoid realloc.
+  Note, while doing this might initially sound scary, this appears to be very
+  stable. It ran on my troublesome sketch for over 3 weeks until I got back from
+  vacation and  flashed an update. Troublesome sketch - runs ESPAsyncTCP, with
+  modified fauxmo emulation for 10 devices. It receives lost of Network traffic
+  related to uPnP scans, which includes lots of TCP connects disconnects RSTs
+  related to uPnP discovery.
 
   I have clocked umm_info critical lock time taking as much as 180us. A common
-  use fot the umm_info call is to get the free heap result. It is common
+  use for the umm_info call is to get the free heap result. It is common
   to try and closely monitor free heap as a method to detect memory leaks.
-  This may results in frequent calls to umm_info. There has not been a clear
+  This may result in frequent calls to umm_info. There has not been a clear
   test case that shows an issue yet; however, I and others think they are or
   have had crashes related to this.
 
-  I have added code that adjust the running free heap number
-  from _umm_malloc, _umm_realloc, and _umm_free. Removing the need to do a
-  long interrupts disabled calculation via _umm_info.
+  I have added code that adjusts the running free heap number from _umm_malloc,
+  _umm_realloc, and _umm_free. Removing the need to do a long interrupts
+  disabled calculation via _umm_info.
 
-  Some min/max time measurments for locks held while in: info, malloc,
-  realloc, and free. Also maintain count of how many times each is called with
-  INTLEVEL set.
+  Build optional, min/max time measurements for locks held while in info,
+  malloc, realloc, and free. Also, maintain a count of how many times each is
+  called with INTLEVEL set.
 
  */
 
-#if 1
+#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
+#define DEBUG_IRAM_ATTR ICACHE_RAM_ATTR
 /*
    Printing from the malloc routines is tricky. Since a lot of library calls
   will want to do malloc.
@@ -582,11 +591,11 @@ Changes:
 
 // ROM _putc1, ignores CRs and sends CR/LF for LF, newline.
 // Always returns character sent.
-int constexpr (*_putc1)(int) = (int (*)(int))0x40001dcc;
+int constexpr (*_rom_putc1)(int) = (int (*)(int))0x40001dcc;
 void uart_buff_switch(uint8_t);
 
-int _sz_printf_P(const size_t buf_len, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
-int _sz_printf_P(const size_t buf_len, const char *fmt, ...) {
+int DEBUG_IRAM_ATTR _isr_safe_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+int DEBUG_IRAM_ATTR _isr_safe_printf_P(const char *fmt, ...) {
 #ifdef DEBUG_ESP_PORT
 #define VALUE(x) __STRINGIFY(x)
   // Preprocessor and compiler together will optimize away the if.
@@ -598,17 +607,18 @@ int _sz_printf_P(const size_t buf_len, const char *fmt, ...) {
 #else
   uart_buff_switch(0U); // Side effect, clears RX FIFO
 #endif
-
-  char __aligned(4) ram_buf[buf_len];
+  size_t str_len = ets_strlen(fmt);
+  size_t buf_len = (str_len + 1 + 3) & ~0x03U;
+  char ram_buf[buf_len] __attribute__ ((aligned(4)));
   ets_memcpy(ram_buf, fmt, buf_len);
   va_list argPtr;
   va_start(argPtr, fmt);
-  int result = ets_vprintf(_putc1, ram_buf, argPtr);
+  int result = ets_vprintf(_rom_putc1, ram_buf, argPtr);
   va_end(argPtr);
   return result;
 }
 
-#define printf(fmt, ...) _sz_printf_P((sizeof(fmt) + 3) & ~0x03U, PSTR(fmt), ##__VA_ARGS__)
+#define printf(fmt, ...) _isr_safe_printf_P(PSTR(fmt), ##__VA_ARGS__)
 #else
 // Macro to place constant strings into PROGMEM and print them properly
 #define printf(fmt, ...) printf(PSTR(fmt), ## __VA_ARGS__ )
@@ -1182,9 +1192,11 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
       ummHeapInfo.maxFreeContiguousBlocks = curBlocks;
     }
   }
+#if defined(DEBUG_ESP_PORT)
+  // This is a good place to verify we are calculating correctly
+  assert(ummHeapFreeBlocks == ummHeapInfo.freeBlocks);
+#endif
 
-//D // This is a good place to verify we are calculating correctly
-//D assert(ummHeapFreeBlocks == ummHeapInfo.freeBlocks);
   DBG_LOG_FORCE( force, "|0x%08lx|B %5d|NB %5d|PB %5d|Z %5d|NF %5d|PF %5d|\n",
       (unsigned long)(&UMM_BLOCK(blockNo)),
       blockNo,

@@ -33,11 +33,7 @@
 #include "pgmspace.h"
 #include "gdb_hooks.h"
 #include "StackThunk.h"
-#include "Esp.h"
-
-// #ifndef xt_rsr_ps
-// #define xt_rsr_ps()  (__extension__({uint32_t state; __asm__ __volatile__("rsr.ps %0;" : "=a" (state)::"memory"); state;}))
-// #endif
+// #include "Esp.h"
 
 #ifndef __STRINGIFY
 #define __STRINGIFY(a) #a
@@ -46,6 +42,32 @@
 #ifndef xt_rsr
 #define xt_rsr(sr) (__extension__({uint32_t r; __asm__ __volatile__ ("rsr %0," __STRINGIFY(sr) : "=a"(r)::"memory"); r;}))
 #endif
+
+// // Start of ISR debug support .h file - tied to ALT_POSTMORTEM
+// extern "C" {
+//   // Print 1 character, ignore '\r' and print "\r\n" when '\n' detected.
+//   int constexpr (*_putc1)(int);
+//   #undef putc
+//   #define putc _putc1
+//
+//   int _pm_puts_P(const char *fmt);
+//   #undef puts_P
+//   // Print null terminated string. Takes aligned(4) address of PROGMEM string.
+//   #define puts_P(str) _pm_puts_P(str)
+//
+//   #undef puts
+//   // Print null terminated string. Specified string is stored in PROGMEM.
+//   #define puts(str) _pm_puts_P(PSTR(str))
+//
+//   int _pm_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+//   #undef printf
+//   #undef printf_P
+//   #define printf_P(fmt, ...) _pm_printf_P(fmt, ##__VA_ARGS__)
+//   #define printf(fmt, ...) _pm_printf_P(PSTR(fmt), ##__VA_ARGS__)
+//
+//   void inflight_stack_trace(void);
+// };
+// End of .h file
 
 #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
 #define DEBUG_IRAM_ATTR ICACHE_RAM_ATTR
@@ -68,7 +90,6 @@ extern void __custom_crash_callback( struct rst_info * rst_info, uint32_t stack,
 }
 extern void custom_crash_callback( struct rst_info * rst_info, uint32_t stack, uint32_t stack_end ) __attribute__ ((weak, alias("__custom_crash_callback")));
 
-#define PS_INVALID_VALUE (0x80000000U)
 static struct _PANIC {
     // "const char*" values are pointers to PROGMEM const strings
     const char* file;
@@ -78,11 +99,11 @@ static struct _PANIC {
     uint32_t ps_reg;
     int line;
     bool abort_called;
-} s_panic = {NULL, NULL, NULL, NULL, PS_INVALID_VALUE, 0, false};
+}  s_panic = {NULL, NULL, NULL, NULL, 0, 0, false};
 
 void abort() __attribute__((noreturn));
 static void print_stack(uint32_t start, uint32_t end);
-static void raise_exception(bool early_reporting) __attribute__((noreturn));
+static void raise_exception(void) __attribute__((noreturn));
 
 /*
     Print routines that can safely print with interrupts disabled
@@ -111,72 +132,28 @@ void inline _select_dbg_serial(void) {
 #endif
 }
 
-// #define SZ_METHOD
-
-#ifdef SZ_METHOD
-static int DEBUG_IRAM_ATTR _sz_puts_P(const size_t buf_len, const char *fmt) {
+int DEBUG_IRAM_ATTR _pm_puts_P(const char *fmt) {
     _select_dbg_serial();
+    size_t str_len = ets_strlen(fmt);
+    size_t buf_len = (str_len + 1 + 3) & ~0x03U;
     char ram_buf[buf_len] __attribute__ ((aligned(4)));
     ets_memcpy(ram_buf, fmt, buf_len);
     const char *pS = ram_buf;
     char c;
     while( (c=*pS++) ) _putc1(c);
-    return 1;
+    return str_len;
 }
-
 #undef puts_P
-static int DEBUG_IRAM_ATTR puts_P(const char *fmt) {
-    size_t szLen = ets_strlen(fmt) + 1;
-    size_t buf_len = (szLen + 3) & ~0x03U;
-    return _sz_puts_P(buf_len, fmt);
-}
-
+#define puts_P(str) _pm_puts_P(str)
 #undef puts
-#define puts(str) _sz_puts_P((sizeof(str) + 3) & ~0x03U, PSTR(str))
+#define puts(str) _pm_puts_P(PSTR(str))
 
-#else // ! SZ_METHOD
-
-#undef puts_P
-static int DEBUG_IRAM_ATTR puts_P(const char *fmt) {
-    _select_dbg_serial();
-    size_t szLen = ets_strlen(fmt) + 1;
-    size_t buf_len = (szLen + 3) & ~0x03U;
-    char ram_buf[buf_len] __attribute__ ((aligned(4)));
-    ets_memcpy(ram_buf, fmt, buf_len);
-    const char *pS = ram_buf;
-    char c;
-    while( (c=*pS++) ) _putc1(c);
-    return 1;
-}
-#undef puts
-#define puts(str) puts_P(PSTR(str))
-#endif
-
-#ifdef SZ_METHOD
-static int DEBUG_IRAM_ATTR _pmsz_printf_P(const size_t buf_len, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
-static int DEBUG_IRAM_ATTR _pmsz_printf_P(const size_t buf_len, const char *fmt, ...) {
+int DEBUG_IRAM_ATTR _pm_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+int DEBUG_IRAM_ATTR _pm_printf_P(const char *fmt, ...) {
     _select_dbg_serial();
     WDT_FEED();
-    char __aligned(4) ram_buf[buf_len];
-    ets_memcpy(ram_buf, fmt, buf_len);
-    va_list argPtr;
-    va_start(argPtr, fmt);
-    int result = ets_vprintf(_putc1, ram_buf, argPtr);
-    va_end(argPtr);
-    return result;
-}
-#undef printf
-#define printf(fmt, ...) _pmsz_printf_P((sizeof(fmt) + 3) & ~0x03U, PSTR(fmt), ##__VA_ARGS__)
-
-#else  // ! SZ_METHOD
-
-#undef _printf_P
-static int DEBUG_IRAM_ATTR _pm_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-static int DEBUG_IRAM_ATTR _pm_printf_P(const char *fmt, ...) {
-    _select_dbg_serial();
-    WDT_FEED();
-    size_t szLen = ets_strlen(fmt) + 1;
-    size_t buf_len = (szLen + 3) & ~0x03U;
+    size_t str_len = ets_strlen(fmt);
+    size_t buf_len = (str_len + 1 + 3) & ~0x03U;
     char ram_buf[buf_len] __attribute__ ((aligned(4)));
     ets_memcpy(ram_buf, fmt, buf_len);
     va_list argPtr;
@@ -187,18 +164,20 @@ static int DEBUG_IRAM_ATTR _pm_printf_P(const char *fmt, ...) {
 }
 #undef printf
 #define printf(fmt, ...) _pm_printf_P(PSTR(fmt), ##__VA_ARGS__)
-#endif // #ifdef SZ_METHOD
+
 
 static void DEBUG_IRAM_ATTR crashReport(struct rst_info *rst_info, uint32_t sp_dump,
                         uint32_t offset, bool custom_crash_cb_enabled) {
 
-    if (PS_INVALID_VALUE != s_panic.ps_reg) {
+#ifdef DEBUG_ESP_ISR
+    if (0 != s_panic.ps_reg) {
         printf("\nPS Register=0x%03X, Interrupts ", s_panic.ps_reg);
         if(s_panic.ps_reg & 0x0FU)
             puts("disabled\n");
         else
             puts("enabled\n");
     }
+#endif
     if (s_panic.line) {
         puts("\nPanic ");
         puts_P(s_panic.file);
@@ -339,38 +318,36 @@ static void DEBUG_IRAM_ATTR fill_rst_info(struct rst_info *rst_info) {
 #endif
     rst_info->reason = REASON_SOFT_WDT_RST; // Fake it =3
 }
-static void DEBUG_IRAM_ATTR raise_exception(bool early_reporting) {
+static void DEBUG_IRAM_ATTR raise_exception(void) {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
+#ifdef DEBUG_ESP_ISR
     s_panic.ps_reg = xt_rsr(ps);
-    // if (early_reporting || 0 != (s_panic.ps_reg & 0x0FU)) {
-        // If interrupts are disabled, must generate debug info NOW.
-        // Note this would have followed the path of "Soft WDT reset".
-        // so make this look like a "Soft WDT reset"
-        struct rst_info rst_info;
-        fill_rst_info(&rst_info);
-        system_rtc_mem_write(0, &rst_info, sizeof(rst_info));
-        crashReport(&rst_info, sp_dump, 0, true);
+#endif
+    // Just in case interrupts are disabled, must generate debug info NOW. Note
+    // this would have followed the path of "Soft WDT reset". So make this look
+    // like a "Soft WDT reset"
+    struct rst_info rst_info;
+    fill_rst_info(&rst_info);
+    system_rtc_mem_write(0, &rst_info, sizeof(rst_info));
+    crashReport(&rst_info, sp_dump, 0, true);
 
-        // We need an exit that will cause the system to reboot.
-        // Maybe call __real_system_restart_local(); It waits for the tx FIFOs
-        // to empty and other stuff before calling system_restart_core().
-        // It looks like the right way to handle this.
-        __real_system_restart_local(); // Should not return.
-    // }
-    //
-    // __asm__ __volatile__ ("syscall");
+    // We need an exit that will cause the system to reboot.
+    // Maybe call __real_system_restart_local(); It waits for the tx FIFOs
+    // to empty and other stuff before calling system_restart_core().
+    // It looks like the right way to handle this.
+    __real_system_restart_local(); // Should not return.
     while (1); // never reached, needed to satisfy "noreturn" attribute
 }
 
 void DEBUG_IRAM_ATTR abort() {
     s_panic.abort_called = true;
-    raise_exception(true);
+    raise_exception();
 }
 
 void DEBUG_IRAM_ATTR __unhandled_exception(const char *str) {
     s_panic.unhandled_exception = str;
-    raise_exception(true);
+    raise_exception();
 }
 
 void DEBUG_IRAM_ATTR __assert_func(const char *file, int line, const char *func, const char *what) {
@@ -379,7 +356,7 @@ void DEBUG_IRAM_ATTR __assert_func(const char *file, int line, const char *func,
     s_panic.func = func;
     s_panic.what = what;
     gdb_do_break();     /* if GDB is not present, this is a no-op */
-    raise_exception(true);
+    raise_exception();
 }
 
 void DEBUG_IRAM_ATTR __panic_func(const char* file, int line, const char* func) {
@@ -388,20 +365,20 @@ void DEBUG_IRAM_ATTR __panic_func(const char* file, int line, const char* func) 
     s_panic.func = func;
     s_panic.what = 0;
     gdb_do_break();     /* if GDB is not present, this is a no-op */
-    raise_exception(true);
+    raise_exception();
 }
 
-// Typical call:  inflight_stack_trace(xt_rsr(ps));
-void DEBUG_IRAM_ATTR inflight_stack_trace(uint32_t ps_reg) {
+#ifdef DEBUG_ESP_ISR
+void DEBUG_IRAM_ATTR inflight_stack_trace(void) {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
-    s_panic.ps_reg = ps_reg;
+    s_panic.ps_reg = xt_rsr(PS);
     struct rst_info rst_info;
     fill_rst_info(&rst_info);
     puts("\nPostmortem Infligth Stack Trace\n");
     crashReport(&rst_info, sp_dump, 0, false);
 }
-
+#endif
 };
 #else
 /*
