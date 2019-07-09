@@ -43,31 +43,33 @@
 #define xt_rsr(sr) (__extension__({uint32_t r; __asm__ __volatile__ ("rsr %0," __STRINGIFY(sr) : "=a"(r)::"memory"); r;}))
 #endif
 
-// // Start of ISR debug support .h file - tied to ALT_POSTMORTEM
-// extern "C" {
-//   // Print 1 character, ignore '\r' and print "\r\n" when '\n' detected.
-//   int constexpr (*_putc1)(int);
-//   #undef putc
-//   #define putc _putc1
-//
-//   int _pm_puts_P(const char *fmt);
-//   #undef puts_P
-//   // Print null terminated string. Takes aligned(4) address of PROGMEM string.
-//   #define puts_P(str) _pm_puts_P(str)
-//
-//   #undef puts
-//   // Print null terminated string. Specified string is stored in PROGMEM.
-//   #define puts(str) _pm_puts_P(PSTR(str))
-//
-//   int _pm_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-//   #undef printf
-//   #undef printf_P
-//   #define printf_P(fmt, ...) _pm_printf_P(fmt, ##__VA_ARGS__)
-//   #define printf(fmt, ...) _pm_printf_P(PSTR(fmt), ##__VA_ARGS__)
-//
-//   void inflight_stack_trace(void);
-// };
+#if 0
+// Start of ISR debug support .h file - tied to ALT_POSTMORTEM
+extern "C" {
+  // Print 1 character, ignore '\r' and print "\r\n" when '\n' detected.
+  int constexpr (*_putc1)(int);
+  #undef putc
+  #define putc _putc1
+
+  int _pm_puts_P(const char *fmt);
+  #undef puts_P
+  // Print null terminated string. Takes aligned(4) address of PROGMEM string.
+  #define puts_P(str) _pm_puts_P(str)
+
+  #undef puts
+  // Print null terminated string. Specified string is stored in PROGMEM.
+  #define puts(str) _pm_puts_P(PSTR(str))
+
+  int _pm_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+  #undef printf
+  #undef printf_P
+  #define printf_P(fmt, ...) _pm_printf_P(fmt, ##__VA_ARGS__)
+  #define printf(fmt, ...) _pm_printf_P(PSTR(fmt), ##__VA_ARGS__)
+
+  void inflight_stack_trace(uint32_t ps_reg); // use xt_rsr(PS) for arg1
+};
 // End of .h file
+#endif
 
 #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
 #define DEBUG_IRAM_ATTR ICACHE_RAM_ATTR
@@ -88,8 +90,11 @@ extern void __custom_crash_callback( struct rst_info * rst_info, uint32_t stack,
     (void) stack;
     (void) stack_end;
 }
+
 extern void custom_crash_callback( struct rst_info * rst_info, uint32_t stack, uint32_t stack_end ) __attribute__ ((weak, alias("__custom_crash_callback")));
 
+// Keeping module static variables together in structure allows the use of
+// processor base pointer instructions and reduces IRAM size.
 static struct _PANIC {
     // "const char*" values are pointers to PROGMEM const strings
     const char* file;
@@ -166,16 +171,20 @@ int DEBUG_IRAM_ATTR _pm_printf_P(const char *fmt, ...) {
 #define printf(fmt, ...) _pm_printf_P(PSTR(fmt), ##__VA_ARGS__)
 
 
-static void DEBUG_IRAM_ATTR crashReport(struct rst_info *rst_info, uint32_t sp_dump,
-                        uint32_t offset, bool custom_crash_cb_enabled) {
+static void DEBUG_IRAM_ATTR crashReport(const struct rst_info *rst_info,
+                            const uint32_t sp_dump, const uint32_t offset,
+                            bool custom_crash_cb_enabled) {
 
 #ifdef DEBUG_ESP_ISR
     if (0 != s_panic.ps_reg) {
         printf("\nPS Register=0x%03X, Interrupts ", s_panic.ps_reg);
-        if(s_panic.ps_reg & 0x0FU)
+        if(s_panic.ps_reg & 0x0FU) {
+            if ((uint32_t)custom_crash_callback >= 0x40200000)
+                custom_crash_cb_enabled = false;
             puts("disabled\n");
-        else
+        } else {
             puts("enabled\n");
+        }
     }
 #endif
     if (s_panic.line) {
@@ -369,10 +378,10 @@ void DEBUG_IRAM_ATTR __panic_func(const char* file, int line, const char* func) 
 }
 
 #ifdef DEBUG_ESP_ISR
-void DEBUG_IRAM_ATTR inflight_stack_trace(void) {
+void DEBUG_IRAM_ATTR inflight_stack_trace(uint32_t ps_reg) {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
-    s_panic.ps_reg = xt_rsr(PS);
+    s_panic.ps_reg = ps_reg; //xt_rsr(PS);
     struct rst_info rst_info;
     fill_rst_info(&rst_info);
     puts("\nPostmortem Infligth Stack Trace\n");
