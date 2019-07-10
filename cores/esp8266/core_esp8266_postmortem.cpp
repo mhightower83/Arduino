@@ -19,7 +19,6 @@
  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 
-
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -115,13 +114,35 @@ static void raise_exception(void) __attribute__((noreturn));
     and free of "malloc lib" calls.
 */
 
+#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
+
+// Print 1 character, ignore '\r' and print "\r\n" when '\n' detected.
+// ROM _putc1, Always returns character sent.
+int constexpr (*_rom_putc1)(int) = (int (*)(int))0x40001dcc;
+#undef putc
+#define putc _rom_putc1
+
+
+int _isr_safe_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+#undef printf
+#undef printf_P
+#define printf_P(fmt, ...) _isr_safe_printf_P(fmt, ##__VA_ARGS__)
+#define printf(fmt, ...) _isr_safe_printf_P(PSTR(fmt), ##__VA_ARGS__)
+
+#undef puts_P
+#define puts_P(str) _isr_safe_printf_P(str)
+#undef puts
+#define puts(str) _isr_safe_printf_P(PSTR(str))
+
+#else
+
+extern "C" void uart_buff_switch(uint8_t);
+
 // ROM _putc1, ignores CRs and sends CR/LF for LF, newline.
 // Always returns character sent.
 extern "C" int constexpr (*_putc1)(int) = (int (*)(int))0x40001dcc;
 #undef putc
 #define putc _putc1
-
-extern "C" void uart_buff_switch(uint8_t);
 
 void inline _select_dbg_serial(void) {
 #ifdef DEBUG_ESP_PORT
@@ -169,11 +190,10 @@ int DEBUG_IRAM_ATTR _pm_printf_P(const char *fmt, ...) {
 }
 #undef printf
 #define printf(fmt, ...) _pm_printf_P(PSTR(fmt), ##__VA_ARGS__)
+#endif
 
-
-static void DEBUG_IRAM_ATTR crashReport(const struct rst_info *rst_info,
-                            const uint32_t sp_dump, const uint32_t offset,
-                            bool custom_crash_cb_enabled) {
+static void DEBUG_IRAM_ATTR crashReport(struct rst_info *rst_info,
+          uint32_t sp_dump, uint32_t offset, bool custom_crash_cb_enabled) {
 
 #ifdef DEBUG_ESP_ISR
     if (0 != s_panic.ps_reg) {
@@ -306,6 +326,8 @@ static void DEBUG_IRAM_ATTR print_stack(uint32_t start, uint32_t end) {
     for (uint32_t pos = start; pos < end; pos += 0x10) {
         uint32_t* values = (uint32_t*)(pos);
 
+        WDT_FEED();  // ISR safe - performs volatile memory write from here.
+
         // rough indicator: stack frames usually have SP saved as the second word
         bool looksLikeStackFrame = (values[2] == pos + 0x10);
 
@@ -346,6 +368,14 @@ static void DEBUG_IRAM_ATTR raise_exception(void) {
     // to empty and other stuff before calling system_restart_core().
     // It looks like the right way to handle this.
     __real_system_restart_local(); // Should not return.
+
+    // TODO:
+    //   1. User Program restart causes are not the same as ROM restart causes
+    //   2. We ant to be sure we have the right causes for both these.
+    //   3. USer program values carry implications as to wether GPIO state changes
+    //   4. Verify that __real_system_restart_local() is giving us the right results.
+    //   Ref: https://www.espressif.com/sites/default/files/documentation/esp8266_reset_causes_and_common_fatal_exception_causes_en.pdf
+
     while (1); // never reached, needed to satisfy "noreturn" attribute
 }
 
