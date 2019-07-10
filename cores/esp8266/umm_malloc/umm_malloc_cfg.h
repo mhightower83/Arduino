@@ -122,7 +122,16 @@ extern char _heap_start;
 #define DEFAULT_CRITICAL_SECTION_INTLEVEL 15
 #endif
 
-#define UMM_CRITICAL_PERIOD_ANALYZE
+/*
+ * -D UMM_CRITICAL_PERIOD_ANALYZE :
+ *
+ * Build option to collect timing usage data on critical section usage in
+ * functions: info, malloc, realloc. Collects MIN, MAX, and number of time
+ * IRQs were disabled at request time. Note, IRQs disabled value can be
+ * inflated by calls to realloc. realloc may call malloc and/or free.
+ * Examine code for specifics on what info is available and how to access.
+*/
+// #define UMM_CRITICAL_PERIOD_ANALYZE
 
 #ifndef __STRINGIFY
 #define __STRINGIFY(a) #a
@@ -137,56 +146,12 @@ extern char _heap_start;
 #define xt_wsr_ps(state)  __asm__ __volatile__("wsr %0,ps; isync" :: "a" (state) : "memory")
 #endif
 
-/*
-  The following is adapted from the ESP8266_RTOS_SDK's xtruntime.h
-  [xtensa copyright/license](https://github.com/espressif/ESP8266_RTOS_SDK/blob/735111069bab94866b6ee3566144007a91c217f6/components/esp8266/include/xtensa/xtruntime.h#L1-L24)
-  [xtruntime.h](https://github.com/espressif/ESP8266_RTOS_SDK/blob/735111069bab94866b6ee3566144007a91c217f6/components/esp8266/include/xtensa/xtruntime.h#L55-L93)
- */
- /*
-  *  A derivative work from xtensa's xruntime.h
-  *
-  *  unsigned XTOS_MIN_INTLEVEL(int intlevel);
-  *  This macro conditionally sets a new interrupt level,
-  *  when 'intlevel' is greater then the interrupt level
-  *  present at the start of the call.
-  *  The 'intlevel' parameter must be a constant.
-  *  This macro returns a 32-bit value that must be passed to
-  *  XTOS_RESTORE_INTLEVEL(unsigned restoreval) to restore
-  *  the previous interrupt level.
-  */
-#define XTOS_SET_MIN_INTLEVEL(intlevel) \
-    ({ \
-        unsigned __tmp, __tmp2, __tmp3; \
-        __asm__ __volatile__( \
-            "rsr.ps %0\n" \
-            "movi   %2, " __STRINGIFY(intlevel) "\n" \
-            "extui  %1, %0, 0, 4\n" \
-            "blt    %2, %1, 1f\n" \
-            "rsil   %0, " __STRINGIFY(intlevel) "\n" \
-            "1:\n" \
-            : "=a" (__tmp), "=&a" (__tmp2), "=&a" (__tmp3) : : "memory" ); \
-    __tmp;})
-
-#define XTOS_RESTORE_INTLEVEL(restoreval) \
-    do { \
-        unsigned __tmp = (restoreval); \
-        __asm__ __volatile__( \
-            "wsr.ps  %0\n" \
-            "rsync\n" \
-            : : "a" (__tmp) : "memory" ); \
-    } while(false)
-
 #if !defined(UMM_CRITICAL_PERIOD_ANALYZE)
-// This method preserves the higher intlevel on entry and restores the
+// This method preserves the intlevel on entry and restores the
 // original intlevel at exit.
 #define UMM_CRITICAL_DECL(tag) uint32_t _saved_ps_##tag
-
-//D #define UMM_CRITICAL_ENTRY(tag) _saved_ps_##tag = XTOS_SET_MIN_INTLEVEL(DEFAULT_CRITICAL_SECTION_INTLEVEL)
-//D #define UMM_CRITICAL_EXIT(tag) XTOS_RESTORE_INTLEVEL(_saved_ps_##tag)
 #define UMM_CRITICAL_ENTRY(tag) _saved_ps_##tag = xt_rsil(DEFAULT_CRITICAL_SECTION_INTLEVEL)
 #define UMM_CRITICAL_EXIT(tag) xt_wsr_ps(_saved_ps_##tag)
-
-
 
 #else
 // This option adds support for gathering time locked data
@@ -206,7 +171,7 @@ struct _UMM_TIME_STATS {
 
 bool get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size);
 
-static inline ICACHE_RAM_ATTR uint32_t GetCycleCount() {
+static inline ICACHE_RAM_ATTR uint32_t _umm_get_cycle_count() {
   uint32_t ccount;
   // Not sure esync is needed before "rsr %0,CCOUNT". I don't see it in
   // Espressf SDK or Xtensa clock.S file.
@@ -216,25 +181,22 @@ static inline ICACHE_RAM_ATTR uint32_t GetCycleCount() {
 }
 
 static inline void _critical_entry(time_stat_t *p, uint32_t *saved_ps) {
-//D    *saved_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_CRITICAL_SECTION_INTLEVEL);
     *saved_ps = xt_rsil(DEFAULT_CRITICAL_SECTION_INTLEVEL);
     if (0U != (*saved_ps & 0x0FU)) {
         p->intlevel += 1U;
-        // inflight_stack_trace(*saved_ps);
     }
 
-    p->start = GetCycleCount();
+    p->start = _umm_get_cycle_count();
 }
 
 static inline void _critical_exit(time_stat_t *p, uint32_t *saved_ps) {
-    uint32_t elapse = GetCycleCount() - p->start;
+    uint32_t elapse = _umm_get_cycle_count() - p->start;
     if (elapse < p->min)
         p->min = elapse;
 
     if (elapse > p->max)
         p->max = elapse;
 
-//D  XTOS_RESTORE_INTLEVEL(*saved_ps);
     xt_wsr_ps(*saved_ps);
 }
 

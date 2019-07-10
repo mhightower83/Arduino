@@ -513,9 +513,9 @@ static struct _UMM_TIME_STATS time_stats = {
 
 bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size) {
     if (p && size != 0) {
-        uint32_t save_ps = XTOS_SET_MIN_INTLEVEL(DEFAULT_CRITICAL_SECTION_INTLEVEL);
+        uint32_t save_ps = xt_rsil(DEFAULT_CRITICAL_SECTION_INTLEVEL);
         memcpy(p, &time_stats, size);
-        XTOS_RESTORE_INTLEVEL(save_ps);
+        xt_wsr_ps(save_ps);
         return true;
     }
     return false;
@@ -544,12 +544,15 @@ extern int umm_last_fail_alloc_size;
 Changes:
 
   Correct critical section with interrupt level preserving and nest support
-  alternative. Replace ets_intr_lock()/ets_intr_unlock() with
-  uint32_t oldValue=xt_rsil(3)/xt_wrs(oldValue)
+  alternative. Replace ets_intr_lock()/ets_intr_unlock() with uint32_t
+  oldValue=xt_rsil(3)/xt_wrs(oldValue). Added UMM_CRITICAL_DECL macro to define
+  storage for current state. Expanded UMM_CRITICAL_... to  use unique
+  identifiers. This helpt facilitate gather function specific  timing
+  information.
 
   Replace printf with something that is ROM or IRAM based so that a printf
-  that occurs during an ISR malloc/new does not cause a crash. To avoid a
-  reentry issue it should also avoid doing malloc lib calls
+  that occurs during an ISR malloc/new does not cause a crash. To avoid any
+  reentry issue it should also avoid doing malloc lib calls.
 
   Refactor realloc to avoid memcpy/memmove while in critical section. This is
   only effective when realloc is called with interrupts enabled. The copy
@@ -582,7 +585,7 @@ Changes:
 #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
 #define DEBUG_IRAM_ATTR ICACHE_RAM_ATTR
 /*
-   Printing from the malloc routines is tricky. Since a lot of library calls
+  Printing from the malloc routines is tricky. Since a lot of library calls
   will want to do malloc.
 
   Objective:  To be able to print "last gasp" diagnostic messages
@@ -607,6 +610,13 @@ int DEBUG_IRAM_ATTR _isr_safe_printf_P(const char *fmt, ...) {
 #else
   uart_buff_switch(0U); // Side effect, clears RX FIFO
 #endif
+  /*
+    To use ets_strlen() and ets_memcpy() safely with PROGMEM, flash storage,
+    the PROGMEM address must be word (4 bytes) aligned. The destination
+    address for ets_memcpy must also be word-aligned. We also round the
+    buf_len up to the nearest word boundary. So that all transfers will be
+    whole words.
+  */
   size_t str_len = ets_strlen(fmt);
   size_t buf_len = (str_len + 1 + 3) & ~0x03U;
   char ram_buf[buf_len] __attribute__ ((aligned(4)));
@@ -1406,10 +1416,10 @@ static void _umm_free( void *ptr ) {
 
   c = (((char *)ptr)-(char *)(&(umm_heap[0])))/sizeof(umm_block);
 
+  DBG_LOG_DEBUG( "Freeing block %6d\n", c );
+
   /* Protect the critical section... */
   UMM_CRITICAL_ENTRY(id_free);
-
-  DBG_LOG_DEBUG( "Freeing block %6d\n", c );
 
   /* Update dynamic Free Block count */
   ummHeapFreeBlocks += (UMM_NBLOCK(c) - c);
@@ -1588,12 +1598,12 @@ static void *_umm_malloc( size_t size ) {
     ummHeapFreeBlocks -= blocks;
 
   } else {
+    /* Release the critical section... */
+    UMM_CRITICAL_EXIT(id_malloc);
+
     /* Out of memory */
 
     DBG_LOG_DEBUG(  "Can't allocate %5d blocks\n", blocks );
-
-    /* Release the critical section... */
-    UMM_CRITICAL_EXIT(id_malloc);
 
     return( (void *)NULL );
   }
@@ -1653,8 +1663,8 @@ static void *_umm_realloc( void *ptr, size_t size ) {
    *
    * Initially we should be safe without a critical section as long as we are
    * referencing values that are within our allocation as constants.
-   , And only reference values that would not change due to redefintion of the
-   * allocations that are around us.
+   * And only reference values that will not change, while the redefintions of
+   * the allocations around us change.
    *
    * Example UMM_PBLOCK() could be change by a call to malloc from an ISR.
    * On the other hand UMM_NBLOCK() is safe returns an address of the next
@@ -1664,8 +1674,13 @@ static void *_umm_realloc( void *ptr, size_t size ) {
    * As long as we don't try to modify the next block or walk the chain of
    * blocks we are okay.
    *
-   * The caller if reentered must insure that we are never called to reallocate
-   * the block we are actively working on.
+   * When called by an "interrupts enabled" type caller, it bears the
+   * responsibility to not call again, with the allocate we are currently
+   * working on. I think this is a normal expectation. I could be wrong.
+   * Such a situation would involve a function that is called from foreground
+   * and ISR context. Such code would already have to be re-entrant. This
+   * change may expand the corner cases for such a function.
+   *
    */
 
   /*
@@ -1930,16 +1945,10 @@ void umm_free( void *ptr ) {
 }
 
 /* ------------------------------------------------------------------------ */
-//D #if 1
+
 size_t ICACHE_FLASH_ATTR umm_free_heap_size( void ) {
   return (size_t)ummHeapFreeBlocks * sizeof(umm_block);
 }
-//D #else
-//D size_t ICACHE_FLASH_ATTR umm_free_heap_size( void ) {
-//D   umm_info(NULL, 0);
-//D   return (size_t)ummHeapInfo.freeBlocks * sizeof(umm_block);
-//D }
-//D #endif
 
 size_t ICACHE_FLASH_ATTR umm_max_block_size( void ) {
   umm_info(NULL, 0);
