@@ -131,7 +131,7 @@ extern char _heap_start;
  * inflated by calls to realloc. realloc may call malloc and/or free.
  * Examine code for specifics on what info is available and how to access.
 */
-// #define UMM_CRITICAL_PERIOD_ANALYZE
+#define UMM_CRITICAL_PERIOD_ANALYZE
 
 #ifndef __STRINGIFY
 #define __STRINGIFY(a) #a

@@ -192,7 +192,7 @@ int DEBUG_IRAM_ATTR _pm_printf_P(const char *fmt, ...) {
 #define printf(fmt, ...) _pm_printf_P(PSTR(fmt), ##__VA_ARGS__)
 #endif
 
-static void DEBUG_IRAM_ATTR crashReport(struct rst_info *rst_info,
+static void DEBUG_IRAM_ATTR print_crash_report(struct rst_info *rst_info,
           uint32_t sp_dump, uint32_t offset, bool custom_crash_cb_enabled) {
 
 #ifdef DEBUG_ESP_ISR
@@ -276,7 +276,52 @@ static void DEBUG_IRAM_ATTR crashReport(struct rst_info *rst_info,
     if (custom_crash_cb_enabled)
         custom_crash_callback( rst_info, sp_dump + offset, stack_end );
 }
+/* Notes to self:
+Begin fictional documenation of System Restart.
 
+An outline of how it might work
+
+From some where `system_restart` or `system_restart_local()`is called.
+eg. *((int*)0) = 0
+
+`system_restart()` (FLASH)
+  * shutdown wifi interface
+  * shutdown wifi timer callbacks
+  * Start a callback timer to run `system_restart_local()` once, after 100ms delay.
+  * returns to caller
+    * SDK notes: "... do not call other functions after calling this API"
+
+`system_restart_local()` (FLASH) - Runs from a timer callback or called
+directly from a Soft WDT call or Startup, maybe some more indirect paths!
+  * Handle some strange stuff
+  * Grab a copy of restart info from RTC memory.
+  * Keep restart info reason REASON_EXCEPTION_RST or REASON_SOFT_WDT_RST
+    for all others:
+      * zero restart info
+      * set reason to REASON_SOFT_RESTART.
+      * Update RTC.
+  * Call `system_restart_hook(&rst_inf)`
+  * wait for uart TX fifo's to empty
+  * Enter lock, do some hardware stuff
+  * call `system_restart_core()` - ps.intlevel still at 3
+
+`system_restart_core()` (IRAM) - This is the end of the line
+  * Wait for SPI flashchip to idle down
+  * Disable read cache.
+  * pass control to reset vector
+
+End of fictional documenation.
+
+Note, we have a linker wrapper around system_restart_local. And when the reason
+does not match our list we return. The real system_restart_local does not have
+a return it calls system_restart_core(0) which finalizes the reboot process.
+It looks like postmortem's path is aborted the current processing path.
+Some other event will have to occur to finish the restart.
+
+Of course this is all based on an interpetation of a psuedo C interpetation of
+disassembled 1.x SDK.
+
+*/
 void DEBUG_IRAM_ATTR __wrap_system_restart_local() {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
@@ -287,8 +332,14 @@ void DEBUG_IRAM_ATTR __wrap_system_restart_local() {
            Trigger an exception to break into GDB.
            TODO: check why gdb_do_break() or asm("break.n 0") do not
            break into GDB here. */
-        __asm__ __volatile__ ("syscall"); // moved in from raise_exception();
+#if 1
+        // These two lines moved in from raise_exception()
+        __asm__ __volatile__ ("syscall"); // moved in from
         while (1); // never reached, needed to satisfy "noreturn" attribute
+#else
+        // this looping will grow the stack usage.
+        raise_exception();
+#endif
     }
 
     struct rst_info rst_info;
@@ -299,6 +350,7 @@ void DEBUG_IRAM_ATTR __wrap_system_restart_local() {
     // and everything up to __wrap_system_restart_local
     // (determined empirically, might break)
     uint32_t offset = 0;
+    bool interesting = true;
     if (rst_info.reason == REASON_SOFT_WDT_RST) {
         offset = 0x1b0;
     }
@@ -309,14 +361,11 @@ void DEBUG_IRAM_ATTR __wrap_system_restart_local() {
         offset = 0x10;
     }
     else {
-        return;
-        // return ?? why would we not pass on to __real_system_restart_local()
-        // What is system_restart_local()? The SDK has a system_restart().
-        // I cannot find a definition for system_restart_local().
-        // ?? __real_system_restart_local();
+        interesting = false;
     }
 
-    crashReport(&rst_info, sp_dump, offset, true);
+    if (interesting)
+        print_crash_report(&rst_info, sp_dump, offset, true);
 
     ets_delay_us(10000);
     __real_system_restart_local();
@@ -336,6 +385,42 @@ static void DEBUG_IRAM_ATTR print_stack(uint32_t start, uint32_t end) {
     }
 }
 
+#if 1
+#ifndef xt_rsil
+#define xt_rsil(level) (__extension__({uint32_t state; __asm__ __volatile__("rsil %0," __STRINGIFY(level) : "=a" (state)); state;}))
+#endif
+static void DEBUG_IRAM_ATTR raise_exception() {
+/*
+  This is old logic flow that I saw with `raise_exception()`:
+
+  For ps.intlevel = 0:
+    * syscall - has not visable effect - call and returns.
+    * while(1) - sit and wait for soft wdt
+    * hit soft wdt - system passes control back to __wrap_system_restart_local
+    * postmortem prints everyone is happy
+
+  For ps.intlevel != 0:
+    * syscall - has not visable effect - call and returns.
+    * while(1) - sit and wait for soft wdt
+    * hardware WDT stikes, __wrap_system_restart_local is never called
+    * postmortem never prints everyone is sad
+
+*/
+    printf("\nJust before syscall\n");
+#ifdef DEBUG_ESP_ISR
+    s_panic.ps_reg = xt_rsr(ps);
+#endif
+    // __asm__ __volatile__ ("syscall"); This doesn't do anything I can see.
+    *((int*)0) = 0;
+
+    // This was used to cause the Soft WDT event.
+    while (1); // never reached, needed to satisfy "noreturn" attribute
+}
+
+
+#else
+
+
 static void DEBUG_IRAM_ATTR fill_rst_info(struct rst_info *rst_info) {
 #if 0
     memset(rst_info, 0, sizeof(struct rst_info));
@@ -349,6 +434,10 @@ static void DEBUG_IRAM_ATTR fill_rst_info(struct rst_info *rst_info) {
 #endif
     rst_info->reason = REASON_SOFT_WDT_RST; // Fake it =3
 }
+
+/*
+  A more direct handling approach
+*/
 static void DEBUG_IRAM_ATTR raise_exception(void) {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
@@ -361,23 +450,25 @@ static void DEBUG_IRAM_ATTR raise_exception(void) {
     struct rst_info rst_info;
     fill_rst_info(&rst_info);
     system_rtc_mem_write(0, &rst_info, sizeof(rst_info));
-    crashReport(&rst_info, sp_dump, 0, true);
+    print_crash_report(&rst_info, sp_dump, 0, true);
 
     // We need an exit that will cause the system to reboot.
     // Maybe call __real_system_restart_local(); It waits for the tx FIFOs
     // to empty and other stuff before calling system_restart_core().
     // It looks like the right way to handle this.
+    ets_delay_us(10000);
+    /*
+      look at what prep is needed before calling this
+        maybe have a flag so __wrap_system_restart_local will pass straignt to
+        __real_system_restart_local.
+        Then we can just do a simpel system_restart - maybe
+    */
     __real_system_restart_local(); // Should not return.
-
-    // TODO:
-    //   1. User Program restart causes are not the same as ROM restart causes
-    //   2. We ant to be sure we have the right causes for both these.
-    //   3. USer program values carry implications as to wether GPIO state changes
-    //   4. Verify that __real_system_restart_local() is giving us the right results.
-    //   Ref: https://www.espressif.com/sites/default/files/documentation/esp8266_reset_causes_and_common_fatal_exception_causes_en.pdf
-
     while (1); // never reached, needed to satisfy "noreturn" attribute
 }
+#endif
+
+
 
 void DEBUG_IRAM_ATTR abort() {
     s_panic.abort_called = true;
@@ -415,7 +506,7 @@ void DEBUG_IRAM_ATTR inflight_stack_trace(uint32_t ps_reg) {
     struct rst_info rst_info;
     fill_rst_info(&rst_info);
     puts("\nPostmortem Infligth Stack Trace\n");
-    crashReport(&rst_info, sp_dump, 0, false);
+    print_crash_report(&rst_info, sp_dump, 0, false);
 }
 #endif
 };
@@ -467,6 +558,7 @@ static const char* s_panic_what = 0;
 
 static bool s_abort_called = false;
 static const char* s_unhandled_exception = NULL;
+//D static bool s_done = false;
 
 void abort() __attribute__((noreturn));
 static void uart_write_char_d(char c);
@@ -514,7 +606,7 @@ void __wrap_system_restart_local() {
            Trigger an exception to break into GDB.
            TODO: check why gdb_do_break() or asm("break.n 0") do not
            break into GDB here. */
-        raise_exception();
+           raise_exception();
     }
 
     struct rst_info rst_info;
@@ -524,6 +616,7 @@ void __wrap_system_restart_local() {
         rst_info.reason != REASON_EXCEPTION_RST &&
         rst_info.reason != REASON_WDT_RST)
     {
+        ets_printf_P(PSTR("\nrst_info.reason not good\n"));
         return;
     }
 
@@ -561,6 +654,7 @@ void __wrap_system_restart_local() {
     uint32_t offset = 0;
     if (rst_info.reason == REASON_SOFT_WDT_RST) {
         offset = 0x1b0;
+        // offset = 0x100;
     }
     else if (rst_info.reason == REASON_EXCEPTION_RST) {
         offset = 0x1a0;
@@ -643,8 +737,39 @@ static void uart1_write_char_d(char c) {
     USF(1) = c;
 }
 
+#ifndef xt_rsil
+#define xt_rsil(level) (__extension__({uint32_t state; __asm__ __volatile__("rsil %0," __STRINGIFY(level) : "=a" (state)); state;}))
+#endif
+#ifndef __STRINGIFY
+#define __STRINGIFY(a) #a
+#endif
+
+#ifndef xt_rsr
+#define xt_rsr(sr) (__extension__({uint32_t r; __asm__ __volatile__ ("rsr %0," __STRINGIFY(sr) : "=a"(r)::"memory"); r;}))
+#endif
+/*
+  This is logic flow that I think I am seeing at `raise_exception()`:
+
+  For ps.intlevel = 0 in non ISR context:
+    * syscall - has not visable effect - call and returns.
+    * while(1) - sit and wait for soft wdt
+    * hit soft wdt - system passes control back to __wrap_system_restart_local
+    * postmortem prints everyone is happy
+
+  For ps.intlevel != 0 and from a hardware ISR context:
+    * syscall - has not visable effect - call and returns.
+    * while(1) - sit and wait for soft wdt
+    * hardware WDT stikes, __wrap_system_restart_local is never called
+    * postmortem never prints everyone is sad
+
+Assumtion: Between ps.intlevel !=0 and hardware interrupt priority soft WDT
+cannot be serviced.
+
+*/
 static void raise_exception() {
     __asm__ __volatile__ ("syscall");
+    ets_printf_P(PSTR("\nReg PS = +0x%03X\n"), xt_rsr(PS));
+    *((int*)0) = 0;
     while (1); // never reached, needed to satisfy "noreturn" attribute
 }
 

@@ -500,6 +500,7 @@
 #include "umm_malloc_cfg.h"   /* user-dependent */
 #if defined(DEBUG_ESP_PORT)
 #include <assert.h>
+#include <esp8266_peri.h>
 #endif
 
 extern "C" {
@@ -584,6 +585,7 @@ Changes:
 
 #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
 #define DEBUG_IRAM_ATTR ICACHE_RAM_ATTR
+
 /*
   Printing from the malloc routines is tricky. Since a lot of library calls
   will want to do malloc.
@@ -592,24 +594,59 @@ Changes:
   when interrupts are disabled and w/o availability of heap resources.
 */
 
+#ifdef DEBUG_ESP_PORT
+#define SELECT_ESP_PORT DEBUG_ESP_PORT
+#else
+#define SELECT_ESP_PORT "Serial"
+#endif
+
+#define VALUE(x) __STRINGIFY(x)
+
+#define TST_ROM_PUTC
+#if defined(TST_ROM_PUTC)
+
 // ROM _putc1, ignores CRs and sends CR/LF for LF, newline.
 // Always returns character sent.
 int constexpr (*_rom_putc1)(int) = (int (*)(int))0x40001dcc;
 void uart_buff_switch(uint8_t);
 
+#else  // ! TST_ROM_PUTC
+
+int DEBUG_IRAM_ATTR _isr_safe_putc(int c) {
+
+  // Preprocessor and compiler together will optimize away the if.
+  if (strcmp("Serial", VALUE(SELECT_ESP_PORT)) == 0) {
+    while (((USS(0) >> USTXC) & 0xff)) { }
+
+    if (c == '\n') {
+        USF(0) = '\r';
+    }
+    USF(0) = c;
+  } else {
+    while (((USS(1) >> USTXC) & 0xff) >= 0x7e) { }
+
+    if (c == '\n') {
+        USF(1) = '\r';
+    }
+    USF(1) = c;
+  }
+
+  return c;
+}
+#define _rom_putc1 _isr_safe_putc
+#endif  // #if defined(TST_ROM_PUTC)
+
 int DEBUG_IRAM_ATTR _isr_safe_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 int DEBUG_IRAM_ATTR _isr_safe_printf_P(const char *fmt, ...) {
-#ifdef DEBUG_ESP_PORT
-#define VALUE(x) __STRINGIFY(x)
+
+#if defined(TST_ROM_PUTC)
   // Preprocessor and compiler together will optimize away the if.
-  if (strcmp("Serial1", VALUE(DEBUG_ESP_PORT)) == 0) {
+  if (strcmp("Serial1", VALUE(SELECT_ESP_PORT)) == 0) {
     uart_buff_switch(1U);
   } else {
     uart_buff_switch(0U);
   }
-#else
-  uart_buff_switch(0U); // Side effect, clears RX FIFO
-#endif
+#endif // #if defined(TST_ROM_PUTC)
   /*
     To use ets_strlen() and ets_memcpy() safely with PROGMEM, flash storage,
     the PROGMEM address must be word (4 bytes) aligned. The destination
@@ -1146,11 +1183,18 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
     if( UMM_NBLOCK(blockNo) & UMM_FREELIST_MASK ) {
       ++ummHeapInfo.freeEntries;
       ummHeapInfo.freeBlocks += curBlocks;
+
+#define UMM_INFO_OPTOMIZED
+#if defined(UMM_INFO_OPTOMIZED)
+      ummHeapInfo.freeSize2 += (unsigned int)curBlocks
+                             * (unsigned int)curBlocks;
+
+#else
       ummHeapInfo.freeSize2 += (unsigned int)curBlocks
                              * (unsigned int)sizeof(umm_block)
                              * (unsigned int)curBlocks
                              * (unsigned int)sizeof(umm_block);
-
+#endif
       if (ummHeapInfo.maxFreeContiguousBlocks < curBlocks) {
         ummHeapInfo.maxFreeContiguousBlocks = curBlocks;
       }
@@ -1228,6 +1272,12 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
 
   /* Release the critical section... */
   UMM_CRITICAL_EXIT(id_info);
+
+#if defined(UMM_INFO_OPTOMIZED)
+  ummHeapInfo.freeSize2 *= (unsigned int)sizeof(umm_block)
+                         * (unsigned int)sizeof(umm_block);
+#endif
+  // assert(ummHeapInfo.freeSize2 == ummHeapInfo.freeSize4);
 
   return( NULL );
 }
