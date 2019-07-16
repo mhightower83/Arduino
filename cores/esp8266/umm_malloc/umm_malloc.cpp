@@ -602,7 +602,7 @@ Changes:
 
 #define VALUE(x) __STRINGIFY(x)
 
-#define TST_ROM_PUTC
+// #define TST_ROM_PUTC
 #if defined(TST_ROM_PUTC)
 
 // ROM _putc1, ignores CRs and sends CR/LF for LF, newline.
