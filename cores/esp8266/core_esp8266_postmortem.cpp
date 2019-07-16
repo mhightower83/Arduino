@@ -361,6 +361,14 @@ void DEBUG_IRAM_ATTR __wrap_system_restart_local() {
         offset = 0x10;
     }
     else {
+        // This way for:
+        //   Power on - not likely
+        //   Software/System restart *
+        //   Deep-Sleep Wake *
+        //   External System reset
+        //
+        // * these are the ones I think may pass by here.
+        printf("\nSystem restart reason: %d\n", rst_info.reason);
         interesting = false;
     }
 
@@ -375,7 +383,7 @@ static void DEBUG_IRAM_ATTR print_stack(uint32_t start, uint32_t end) {
     for (uint32_t pos = start; pos < end; pos += 0x10) {
         uint32_t* values = (uint32_t*)(pos);
 
-        WDT_FEED();  // ISR safe - performs volatile memory write from here.
+        WDT_FEED();  // ISR safe - macro, performs volatile memory writes inline
 
         // rough indicator: stack frames usually have SP saved as the second word
         bool looksLikeStackFrame = (values[2] == pos + 0x10);
@@ -406,7 +414,7 @@ static void DEBUG_IRAM_ATTR raise_exception() {
     * postmortem never prints everyone is sad
 
 */
-    printf("\nJust before syscall\n");
+    printf("\nStarting to raise an exception to effect stack trace.\n");
 #ifdef DEBUG_ESP_ISR
     s_panic.ps_reg = xt_rsr(ps);
 #endif
@@ -546,6 +554,10 @@ void DEBUG_IRAM_ATTR inflight_stack_trace(uint32_t ps_reg) {
 #include "gdb_hooks.h"
 #include "StackThunk.h"
 
+#ifndef xt_rsr
+#define xt_rsr(sr) (__extension__({uint32_t r; __asm__ __volatile__ ("rsr %0," __STRINGIFY(sr) : "=a"(r)::"memory"); r;}))
+#endif
+
 extern "C" {
 
 extern void __real_system_restart_local();
@@ -558,13 +570,20 @@ static const char* s_panic_what = 0;
 
 static bool s_abort_called = false;
 static const char* s_unhandled_exception = NULL;
-//D static bool s_done = false;
 
 void abort() __attribute__((noreturn));
 static void uart_write_char_d(char c);
 static void uart0_write_char_d(char c);
 static void uart1_write_char_d(char c);
 static void print_stack(uint32_t start, uint32_t end);
+
+// using numbers different from "REASON_" in user_interface.h (=0..6)
+enum rst_reason_sw
+{
+    REASON_USER_SWEXCEPTION_RST = 254
+};
+static int s_user_reset_reason = REASON_DEFAULT_RST;
+static const char* s_user_reset_reason_str = 0;
 
 // From UMM, the last caller of a malloc/realloc/calloc which failed:
 extern void *umm_last_fail_alloc_addr;
@@ -600,28 +619,31 @@ void __wrap_system_restart_local() {
     register uint32_t sp asm("a1");
     uint32_t sp_dump = sp;
 
-    if (gdb_present()) {
-        /* When GDBStub is present, exceptions are handled by GDBStub,
-           but Soft WDT will still call this function.
-           Trigger an exception to break into GDB.
-           TODO: check why gdb_do_break() or asm("break.n 0") do not
-           break into GDB here. */
-           raise_exception();
-    }
-
     struct rst_info rst_info;
     memset(&rst_info, 0, sizeof(rst_info));
-    system_rtc_mem_read(0, &rst_info, sizeof(rst_info));
-    if (rst_info.reason != REASON_SOFT_WDT_RST &&
-        rst_info.reason != REASON_EXCEPTION_RST &&
-        rst_info.reason != REASON_WDT_RST)
+    if (s_user_reset_reason == REASON_DEFAULT_RST)
     {
-        ets_printf_P(PSTR("\nrst_info.reason not good\n"));
-        return;
+        system_rtc_mem_read(0, &rst_info, sizeof(rst_info));
+        if (rst_info.reason != REASON_SOFT_WDT_RST &&
+            rst_info.reason != REASON_EXCEPTION_RST &&
+            rst_info.reason != REASON_WDT_RST)
+        {
+            rst_info.reason = REASON_DEFAULT_RST;
+        }
     }
+    else
+        rst_info.reason = s_user_reset_reason;
 
     // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
     ets_install_putc1((void *)&uart_write_char_d);
+
+    if (s_user_reset_reason_str) {
+        ets_printf_P(s_user_reset_reason_str);
+    }
+
+    if (rst_info.reason != REASON_DEFAULT_RST) {
+        ets_printf_P(PSTR("\nPS register: 0x02X\n"), xt_rsr(PS));
+    }
 
     if (s_panic_line) {
         ets_printf_P(PSTR("\nPanic %S:%d %S"), s_panic_file, s_panic_line, s_panic_func);
@@ -643,6 +665,9 @@ void __wrap_system_restart_local() {
     else if (rst_info.reason == REASON_SOFT_WDT_RST) {
         ets_printf_P(PSTR("\nSoft WDT reset\n"));
     }
+    else {
+        ets_printf_P(PSTR("\nGeneric Reset\n"));
+    }
 
     uint32_t cont_stack_start = (uint32_t) &(g_pcont->stack);
     uint32_t cont_stack_end = (uint32_t) g_pcont->stack_end;
@@ -654,7 +679,6 @@ void __wrap_system_restart_local() {
     uint32_t offset = 0;
     if (rst_info.reason == REASON_SOFT_WDT_RST) {
         offset = 0x1b0;
-        // offset = 0x100;
     }
     else if (rst_info.reason == REASON_EXCEPTION_RST) {
         offset = 0x1a0;
@@ -737,39 +761,14 @@ static void uart1_write_char_d(char c) {
     USF(1) = c;
 }
 
-#ifndef xt_rsil
-#define xt_rsil(level) (__extension__({uint32_t state; __asm__ __volatile__("rsil %0," __STRINGIFY(level) : "=a" (state)); state;}))
-#endif
-#ifndef __STRINGIFY
-#define __STRINGIFY(a) #a
-#endif
-
-#ifndef xt_rsr
-#define xt_rsr(sr) (__extension__({uint32_t r; __asm__ __volatile__ ("rsr %0," __STRINGIFY(sr) : "=a"(r)::"memory"); r;}))
-#endif
-/*
-  This is logic flow that I think I am seeing at `raise_exception()`:
-
-  For ps.intlevel = 0 in non ISR context:
-    * syscall - has not visable effect - call and returns.
-    * while(1) - sit and wait for soft wdt
-    * hit soft wdt - system passes control back to __wrap_system_restart_local
-    * postmortem prints everyone is happy
-
-  For ps.intlevel != 0 and from a hardware ISR context:
-    * syscall - has not visable effect - call and returns.
-    * while(1) - sit and wait for soft wdt
-    * hardware WDT stikes, __wrap_system_restart_local is never called
-    * postmortem never prints everyone is sad
-
-Assumtion: Between ps.intlevel !=0 and hardware interrupt priority soft WDT
-cannot be serviced.
-
-*/
 static void raise_exception() {
-    __asm__ __volatile__ ("syscall");
-    ets_printf_P(PSTR("\nReg PS = +0x%03X\n"), xt_rsr(PS));
-    *((int*)0) = 0;
+    if (gdb_present())
+        __asm__ __volatile__ ("syscall"); // triggers GDB when enabled
+
+    s_user_reset_reason = REASON_USER_SWEXCEPTION_RST;
+    s_user_reset_reason_str = PSTR("\nUser exception (panic/abort/assert)");
+    __wrap_system_restart_local();
+
     while (1); // never reached, needed to satisfy "noreturn" attribute
 }
 
