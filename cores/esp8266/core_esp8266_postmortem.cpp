@@ -244,7 +244,7 @@ void DEBUG_IRAM_ATTR print_report(uint32_t sp_dump) {
 #ifdef DEBUG_ESP_ISR
     if ((s_panic.log_mask & MSK_REPORT_NO_ABORT) == 0) {
         if (s_panic.ps_reg & 0x0FU) {
-            printf("\nRegister PS=0x%02X", ps_reg);
+            printf("\nRegister PS=0x%02X", s_panic.ps_reg);
             if ((uint32_t)custom_crash_callback >= 0x40200000)
                 custom_crash_cb_enabled = false;
         }

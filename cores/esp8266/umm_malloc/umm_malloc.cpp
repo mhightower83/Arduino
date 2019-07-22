@@ -495,35 +495,12 @@
 #include <string.h>
 #include <pgmspace.h>
 
+#define _UMM_MALLOC_CPP
 #include "umm_malloc.h"
 
 #include "umm_malloc_cfg.h"   /* user-dependent */
-#if defined(DEBUG_ESP_PORT)
-#include <assert.h>
-#endif
-#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
-#include <esp8266_peri.h>
-#endif
 
 extern "C" {
-
-#ifdef UMM_CRITICAL_PERIOD_ANALYZE
-static struct _UMM_TIME_STATS time_stats = {
-  {0xFFFFFFFF, 0U, 0U, 0U},
-  {0xFFFFFFFF, 0U, 0U, 0U},
-  {0xFFFFFFFF, 0U, 0U, 0U},
-  {0xFFFFFFFF, 0U, 0U, 0U} };
-
-bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size) {
-    if (p && size != 0) {
-        uint32_t save_ps = xt_rsil(DEFAULT_CRITICAL_SECTION_INTLEVEL);
-        memcpy(p, &time_stats, size);
-        xt_wsr_ps(save_ps);
-        return true;
-    }
-    return false;
-}
-#endif
 
 // From UMM, the last caller of a malloc/realloc/calloc which failed:
 extern void *umm_last_fail_alloc_addr;
@@ -544,13 +521,13 @@ extern int umm_last_fail_alloc_size;
 #endif
 
 /*
-Changes:
+Changes for July 2019:
 
   Correct critical section with interrupt level preserving and nest support
   alternative. Replace ets_intr_lock()/ets_intr_unlock() with uint32_t
   oldValue=xt_rsil(3)/xt_wrs(oldValue). Added UMM_CRITICAL_DECL macro to define
   storage for current state. Expanded UMM_CRITICAL_... to  use unique
-  identifiers. This helpt facilitate gather function specific  timing
+  identifiers. This helpt facilitate gather function specific timing
   information.
 
   Replace printf with something that is ROM or IRAM based so that a printf
@@ -563,10 +540,13 @@ Changes:
   80MHz CPU clock). It would be good practice for an ISR to avoid realloc.
   Note, while doing this might initially sound scary, this appears to be very
   stable. It ran on my troublesome sketch for over 3 weeks until I got back from
-  vacation and  flashed an update. Troublesome sketch - runs ESPAsyncTCP, with
+  vacation and flashed an update. Troublesome sketch - runs ESPAsyncTCP, with
   modified fauxmo emulation for 10 devices. It receives lost of Network traffic
   related to uPnP scans, which includes lots of TCP connects disconnects RSTs
   related to uPnP discovery.
+
+  Locking is no longer nested in realloc, due to refactoring for reduced IRQ
+  off time.
 
   I have clocked umm_info critical lock time taking as much as 180us. A common
   use for the umm_info call is to get the free heap result. It is common
@@ -575,125 +555,15 @@ Changes:
   test case that shows an issue yet; however, I and others think they are or
   have had crashes related to this.
 
-  I have added code that adjusts the running free heap number from _umm_malloc,
+  I have added code that updates a current free heap value from _umm_malloc,
   _umm_realloc, and _umm_free. Removing the need to do a long interrupts
-  disabled calculation via _umm_info.
+  disabled calculation via umm_info.
 
   Build optional, min/max time measurements for locks held while in info,
-  malloc, realloc, and free. Also, maintain a count of how many times each is
+  malloc, realloc, and free. Also, maintains a count of how many times each is
   called with INTLEVEL set.
 
  */
-
-#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
-#define DEBUG_IRAM_ATTR ICACHE_RAM_ATTR
-
-/*
-  Printing from the malloc routines is tricky. Since a lot of library calls
-  will want to do malloc.
-
-  Objective:  To be able to print "last gasp" diagnostic messages
-  when interrupts are disabled and w/o availability of heap resources.
-*/
-
-#ifdef DEBUG_ESP_PORT
-#define SELECT_ESP_PORT DEBUG_ESP_PORT
-#else
-#define SELECT_ESP_PORT "Serial"
-#endif
-
-#define VALUE(x) __STRINGIFY(x)
-
-// #define TST_ROM_PUTC
-#if defined(TST_ROM_PUTC)
-
-// ROM _putc1, ignores CRs and sends CR/LF for LF, newline.
-// Always returns character sent.
-int constexpr (*_rom_putc1)(int) = (int (*)(int))0x40001dcc;
-void uart_buff_switch(uint8_t);
-// ROM:400038A4 - esp8266web/info/libs/bios/uartdev.c
-// void uart_buff_switch(uint8 uartnum)
-// {
-//     if(uartnum) {
-//         UartDev.buff_uart_no = uartnum;
-//         return;
-//     }
-//     volatile uint32_t *uartregs = REG_UART_BASE(UartDev.buff_uart_no);
-//     uartregs[IDX_UART_INT_CLR] = 0xFFFF; // UART_INT_CLR(UartDev.buff_uart_no)
-//     uartregs[IDX_UART_INT_ENA] &= 0xE00;
-//     uint8 ch;
-//     while(uart_rx_one_char(&ch) == 0 || uart_rx_readbuff(&UartDev.rcv_buff, &ch));
-//                                      &&
-//     UartDev.buff_uart_no = uartnum; // added
-//     UartDev.rcv_buff.BuffState = EMPTY;
-// }
-#define _isr_safe_putc _rom_putc1
-
-#else  // ! TST_ROM_PUTC
-
-int DEBUG_IRAM_ATTR _isr_safe_putc(int c) {
-
-  // Preprocessor and compiler together will optimize away the if.
-  if (strcmp("Serial", VALUE(SELECT_ESP_PORT)) == 0) {
-    // USS - get uart{0,1} status word
-    // USTXC - bit offset to TX FIFO count, 8 bit field
-    // USF - Uart FIFO
-    // while (((USS(0) >> USTXC) & 0xff)) { } // wait till FIFO empty
-    while (((USS(0) >> USTXC) & 0xff) >= 0x7e) { } // Wait for space for two or more characters.
-
-    if (c == '\n') {
-        USF(0) = '\r';
-    }
-    USF(0) = c;
-  } else {
-    // while (((USS(1) >> USTXC) & 0xff)) { } // wait till FIFO empty
-    while (((USS(1) >> USTXC) & 0xff) >= 0x7e) { }
-
-    if (c == '\n') {
-        USF(1) = '\r';
-    }
-    USF(1) = c;
-  }
-
-  return c;
-}
-#define _rom_putc1 _isr_safe_putc
-#endif  // #if defined(TST_ROM_PUTC)
-
-int DEBUG_IRAM_ATTR _isr_safe_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-int DEBUG_IRAM_ATTR _isr_safe_printf_P(const char *fmt, ...) {
-
-#if defined(TST_ROM_PUTC)
-  // Preprocessor and compiler together will optimize away the if.
-  if (strcmp("Serial1", VALUE(SELECT_ESP_PORT)) == 0) {
-    uart_buff_switch(1U);
-  } else {
-    uart_buff_switch(0U);
-  }
-#endif // #if defined(TST_ROM_PUTC)
-  /*
-    To use ets_strlen() and ets_memcpy() safely with PROGMEM, flash storage,
-    the PROGMEM address must be word (4 bytes) aligned. The destination
-    address for ets_memcpy must also be word-aligned. We also round the
-    buf_len up to the nearest word boundary. So that all transfers will be
-    whole words.
-  */
-  size_t str_len = ets_strlen(fmt);
-  size_t buf_len = (str_len + 1 + 3) & ~0x03U;
-  char ram_buf[buf_len] __attribute__ ((aligned(4)));
-  ets_memcpy(ram_buf, fmt, buf_len);
-  va_list argPtr;
-  va_start(argPtr, fmt);
-  int result = ets_vprintf(_isr_safe_putc, ram_buf, argPtr);
-  va_end(argPtr);
-  return result;
-}
-
-#define printf(fmt, ...) _isr_safe_printf_P(PSTR(fmt), ##__VA_ARGS__)
-#else
-// Macro to place constant strings into PROGMEM and print them properly
-#define printf(fmt, ...) printf(PSTR(fmt), ## __VA_ARGS__ )
-#endif
 
 /* -- dbglog {{{ */
 
@@ -821,7 +691,7 @@ unsigned short int umm_numblocks = 0;
 
 /*
  * This does not look safe, no access locks. It currently is not being
- * built, so not an immediate issue. -  mjh 061019
+ * built, so not an immediate issue. -  @mhightower83 061019
  */
 /* integrity check (UMM_INTEGRITY_CHECK) {{{ */
 #if defined(UMM_INTEGRITY_CHECK)
@@ -1207,18 +1077,11 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
     if( UMM_NBLOCK(blockNo) & UMM_FREELIST_MASK ) {
       ++ummHeapInfo.freeEntries;
       ummHeapInfo.freeBlocks += curBlocks;
-
-#define UMM_INFO_OPTOMIZED
-#if defined(UMM_INFO_OPTOMIZED)
-      ummHeapInfo.freeSize2 += (unsigned int)curBlocks
-                             * (unsigned int)curBlocks;
-
-#else
       ummHeapInfo.freeSize2 += (unsigned int)curBlocks
                              * (unsigned int)sizeof(umm_block)
                              * (unsigned int)curBlocks
                              * (unsigned int)sizeof(umm_block);
-#endif
+
       if (ummHeapInfo.maxFreeContiguousBlocks < curBlocks) {
         ummHeapInfo.maxFreeContiguousBlocks = curBlocks;
       }
@@ -1270,10 +1133,6 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
       ummHeapInfo.maxFreeContiguousBlocks = curBlocks;
     }
   }
-#if defined(DEBUG_ESP_PORT)
-  // This is a good place to verify we are calculating correctly
-  assert(ummHeapFreeBlocks == ummHeapInfo.freeBlocks);
-#endif
 
   DBG_LOG_FORCE( force, "|0x%08lx|B %5d|NB %5d|PB %5d|Z %5d|NF %5d|PF %5d|\n",
       (unsigned long)(&UMM_BLOCK(blockNo)),
@@ -1296,12 +1155,6 @@ void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force ) {
 
   /* Release the critical section... */
   UMM_CRITICAL_EXIT(id_info);
-
-#if defined(UMM_INFO_OPTOMIZED)
-  ummHeapInfo.freeSize2 *= (unsigned int)sizeof(umm_block)
-                         * (unsigned int)sizeof(umm_block);
-#endif
-  // assert(ummHeapInfo.freeSize2 == ummHeapInfo.freeSize4);
 
   return( NULL );
 }
