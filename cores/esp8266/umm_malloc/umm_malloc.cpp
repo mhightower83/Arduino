@@ -500,6 +500,8 @@
 #include "umm_malloc_cfg.h"   /* user-dependent */
 #if defined(DEBUG_ESP_PORT)
 #include <assert.h>
+#endif
+#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
 #include <esp8266_peri.h>
 #endif
 
@@ -609,6 +611,23 @@ Changes:
 // Always returns character sent.
 int constexpr (*_rom_putc1)(int) = (int (*)(int))0x40001dcc;
 void uart_buff_switch(uint8_t);
+// ROM:400038A4 - esp8266web/info/libs/bios/uartdev.c
+// void uart_buff_switch(uint8 uartnum)
+// {
+//     if(uartnum) {
+//         UartDev.buff_uart_no = uartnum;
+//         return;
+//     }
+//     volatile uint32_t *uartregs = REG_UART_BASE(UartDev.buff_uart_no);
+//     uartregs[IDX_UART_INT_CLR] = 0xFFFF; // UART_INT_CLR(UartDev.buff_uart_no)
+//     uartregs[IDX_UART_INT_ENA] &= 0xE00;
+//     uint8 ch;
+//     while(uart_rx_one_char(&ch) == 0 || uart_rx_readbuff(&UartDev.rcv_buff, &ch));
+//                                      &&
+//     UartDev.buff_uart_no = uartnum; // added
+//     UartDev.rcv_buff.BuffState = EMPTY;
+// }
+#define _isr_safe_putc _rom_putc1
 
 #else  // ! TST_ROM_PUTC
 
@@ -616,13 +635,18 @@ int DEBUG_IRAM_ATTR _isr_safe_putc(int c) {
 
   // Preprocessor and compiler together will optimize away the if.
   if (strcmp("Serial", VALUE(SELECT_ESP_PORT)) == 0) {
-    while (((USS(0) >> USTXC) & 0xff)) { }
+    // USS - get uart{0,1} status word
+    // USTXC - bit offset to TX FIFO count, 8 bit field
+    // USF - Uart FIFO
+    // while (((USS(0) >> USTXC) & 0xff)) { } // wait till FIFO empty
+    while (((USS(0) >> USTXC) & 0xff) >= 0x7e) { } // Wait for space for two or more characters.
 
     if (c == '\n') {
         USF(0) = '\r';
     }
     USF(0) = c;
   } else {
+    // while (((USS(1) >> USTXC) & 0xff)) { } // wait till FIFO empty
     while (((USS(1) >> USTXC) & 0xff) >= 0x7e) { }
 
     if (c == '\n') {
@@ -660,7 +684,7 @@ int DEBUG_IRAM_ATTR _isr_safe_printf_P(const char *fmt, ...) {
   ets_memcpy(ram_buf, fmt, buf_len);
   va_list argPtr;
   va_start(argPtr, fmt);
-  int result = ets_vprintf(_rom_putc1, ram_buf, argPtr);
+  int result = ets_vprintf(_isr_safe_putc, ram_buf, argPtr);
   va_end(argPtr);
   return result;
 }

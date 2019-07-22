@@ -1,4 +1,4 @@
-#if defined(ALT_POSTMORTEM)
+#if 1 //defined(ALT_POSTMORTEM)
 /*
  postmortem.c - output of debug info on sketch crash
  Copyright (c) 2015 Ivan Grokhotkov. All rights reserved.
@@ -65,7 +65,7 @@ extern "C" {
   #define printf_P(fmt, ...) _pm_printf_P(fmt, ##__VA_ARGS__)
   #define printf(fmt, ...) _pm_printf_P(PSTR(fmt), ##__VA_ARGS__)
 
-  void inflight_stack_trace(uint32_t ps_reg); // use xt_rsr(PS) for arg1
+  //D void inflight_stack_trace(uint32_t ps_reg); // use xt_rsr(PS) for arg1
 };
 // End of .h file
 #endif
@@ -92,6 +92,9 @@ extern void __custom_crash_callback( struct rst_info * rst_info, uint32_t stack,
 
 extern void custom_crash_callback( struct rst_info * rst_info, uint32_t stack, uint32_t stack_end ) __attribute__ ((weak, alias("__custom_crash_callback")));
 
+// global so it can more easily be modified from gdb_debug
+int g_dbg_logging_control = 0;
+
 // Keeping module static variables together in structure allows the use of
 // processor base pointer instructions and reduces IRAM size.
 static struct _PANIC {
@@ -103,7 +106,16 @@ static struct _PANIC {
     uint32_t ps_reg;
     int line;
     bool abort_called;
-}  s_panic = {NULL, NULL, NULL, NULL, 0, 0, false};
+    int user_reset_reason;
+    const char* user_reset_reason_str;
+    int log_mask;
+}  s_panic = {NULL, NULL, NULL, NULL, 0, 0, false, 0, NULL, 0};
+
+enum rst_reason_sw
+{
+    REASON_USER_SWEXCEPTION_RST = 254,
+    REASON_USER_ASSERT_LOG = 253
+};
 
 void abort() __attribute__((noreturn));
 static void print_stack(uint32_t start, uint32_t end);
@@ -192,22 +204,67 @@ int DEBUG_IRAM_ATTR _pm_printf_P(const char *fmt, ...) {
 #define printf(fmt, ...) _pm_printf_P(PSTR(fmt), ##__VA_ARGS__)
 #endif
 
-static void DEBUG_IRAM_ATTR print_crash_report(struct rst_info *rst_info,
-          uint32_t sp_dump, uint32_t offset, bool custom_crash_cb_enabled) {
+void DEBUG_IRAM_ATTR print_report(uint32_t sp_dump) {
+    bool custom_crash_cb_enabled = true;
+    uint32_t offset = 0;
+
+    struct rst_info rst_info;
+    memset(&rst_info, 0, sizeof(rst_info));
+    if (REASON_DEFAULT_RST == s_panic.user_reset_reason)
+    {
+        system_rtc_mem_read(0, &rst_info, sizeof(rst_info));
+        // amount of stack taken by interrupt or exception handler
+        // and everything up to __wrap_system_restart_local
+        // (determined empirically, might break)
+        if (rst_info.reason == REASON_SOFT_WDT_RST) {
+            offset = 0x1b0;
+        }
+        else if (rst_info.reason == REASON_EXCEPTION_RST) {
+            offset = 0x1a0;
+        }
+        else if (rst_info.reason == REASON_WDT_RST) {
+            offset = 0x10;
+        } else {
+            rst_info.reason = REASON_DEFAULT_RST;
+        }
+    }
+    else
+        rst_info.reason = s_panic.user_reset_reason;
+
+    //D // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
+    //D ets_install_putc1((void *)&uart_write_char_d);
+
+    if (s_panic.user_reset_reason_str) {
+        puts_P(s_panic.user_reset_reason_str);
+    }
+
+    if (!(s_panic.log_mask & MSK_REPORT_PS_REG_VALID))
+        s_panic.ps_reg = xt_rsr(PS);
 
 #ifdef DEBUG_ESP_ISR
-    if (0 != s_panic.ps_reg) {
-        printf("\nPS Register=0x%03X, Interrupts ", s_panic.ps_reg);
-        if(s_panic.ps_reg & 0x0FU) {
+    if ((s_panic.log_mask & MSK_REPORT_NO_ABORT) == 0) {
+        if (s_panic.ps_reg & 0x0FU) {
+            printf("\nRegister PS=0x%02X", ps_reg);
             if ((uint32_t)custom_crash_callback >= 0x40200000)
                 custom_crash_cb_enabled = false;
-            puts("disabled\n");
-        } else {
-            puts("enabled\n");
         }
     }
 #endif
-    if (s_panic.line) {
+    if (s_panic.log_mask & MSK_REPORT_NO_ABORT) {
+        puts("\nAssert log: (");
+        if (s_panic.what)
+            puts_P(s_panic.what);
+        puts("), failed. ");
+        puts_P(s_panic.file);
+        printf(":%d ", s_panic.line);
+        puts_P(s_panic.func);
+        if (s_panic.ps_reg & 0x0FU)
+            printf(", REG PS=0x%02X", s_panic.ps_reg);
+        putc('\n');
+        if (s_panic.log_mask & MSK_REPORT_NO_STACK_TRACE)
+            return;
+    }
+    else if (s_panic.line) {
         puts("\nPanic ");
         puts_P(s_panic.file);
         printf(":%d ", s_panic.line);
@@ -227,13 +284,13 @@ static void DEBUG_IRAM_ATTR print_crash_report(struct rst_info *rst_info,
     else if (s_panic.abort_called) {
         puts("\nAbort called\n");
     }
-    else if (rst_info->reason == REASON_EXCEPTION_RST) {
+    else if (rst_info.reason == REASON_EXCEPTION_RST) {
         printf("\nException (%d):\nepc1=0x%08x epc2=0x%08x"
                 " epc3=0x%08x excvaddr=0x%08x depc=0x%08x\n",
-                rst_info->exccause, rst_info->epc1, rst_info->epc2,
-                rst_info->epc3, rst_info->excvaddr, rst_info->depc);
+                rst_info.exccause, rst_info.epc1, rst_info.epc2,
+                rst_info.epc3, rst_info.excvaddr, rst_info.depc);
     }
-    else if (rst_info->reason == REASON_SOFT_WDT_RST) {
+    else if (rst_info.reason == REASON_SOFT_WDT_RST) {
         puts("\nSoft WDT reset\n");
     }
 
@@ -273,9 +330,22 @@ static void DEBUG_IRAM_ATTR print_crash_report(struct rst_info *rst_info,
         printf("\nlast failed alloc call: %08X(%d)\n", (uint32_t)umm_last_fail_alloc_addr, umm_last_fail_alloc_size);
     }
 
+    if (s_panic.log_mask & MSK_REPORT_NO_ABORT)
+        return;
+
     if (custom_crash_cb_enabled)
-        custom_crash_callback( rst_info, sp_dump + offset, stack_end );
+        custom_crash_callback( &rst_info, sp_dump + offset, stack_end );
 }
+
+void DEBUG_IRAM_ATTR __wrap_system_restart_local() {
+    register uint32_t sp asm("a1");
+    uint32_t sp_dump = sp;
+    print_report(sp_dump);
+    // while (((USS(0) >> USTXC) & 0xff)) { } // Let the FIFO empty
+    ets_delay_us(12000);  // Let the last few serial bits shift out
+    __real_system_restart_local();
+}
+
 /* Notes to self:
 Begin fictional documenation of System Restart.
 
@@ -322,62 +392,62 @@ Of course this is all based on an interpetation of a psuedo C interpetation of
 disassembled 1.x SDK.
 
 */
-void DEBUG_IRAM_ATTR __wrap_system_restart_local() {
-    register uint32_t sp asm("a1");
-    uint32_t sp_dump = sp;
-
-    if (gdb_present()) {
-        /* When GDBStub is present, exceptions are handled by GDBStub,
-           but Soft WDT will still call this function.
-           Trigger an exception to break into GDB.
-           TODO: check why gdb_do_break() or asm("break.n 0") do not
-           break into GDB here. */
-#if 1
-        // These two lines moved in from raise_exception()
-        __asm__ __volatile__ ("syscall"); // moved in from
-        while (1); // never reached, needed to satisfy "noreturn" attribute
-#else
-        // this looping will grow the stack usage.
-        raise_exception();
-#endif
-    }
-
-    struct rst_info rst_info;
-    memset(&rst_info, 0, sizeof(rst_info));
-    system_rtc_mem_read(0, &rst_info, sizeof(rst_info));
-
-    // amount of stack taken by interrupt or exception handler
-    // and everything up to __wrap_system_restart_local
-    // (determined empirically, might break)
-    uint32_t offset = 0;
-    bool interesting = true;
-    if (rst_info.reason == REASON_SOFT_WDT_RST) {
-        offset = 0x1b0;
-    }
-    else if (rst_info.reason == REASON_EXCEPTION_RST) {
-        offset = 0x1a0;
-    }
-    else if (rst_info.reason == REASON_WDT_RST) {
-        offset = 0x10;
-    }
-    else {
-        // This way for:
-        //   Power on - not likely
-        //   Software/System restart *
-        //   Deep-Sleep Wake *
-        //   External System reset
-        //
-        // * these are the ones I think may pass by here.
-        printf("\nSystem restart reason: %d\n", rst_info.reason);
-        interesting = false;
-    }
-
-    if (interesting)
-        print_crash_report(&rst_info, sp_dump, offset, true);
-
-    ets_delay_us(10000);
-    __real_system_restart_local();
-}
+// void DEBUG_IRAM_ATTR __wrap_system_restart_local() {
+//     register uint32_t sp asm("a1");
+//     uint32_t sp_dump = sp;
+//
+//     if (gdb_present()) {
+//         /* When GDBStub is present, exceptions are handled by GDBStub,
+//            but Soft WDT will still call this function.
+//            Trigger an exception to break into GDB.
+//            TODO: check why gdb_do_break() or asm("break.n 0") do not
+//            break into GDB here. */
+// #if 1
+//         // These two lines moved in from raise_exception()
+//         __asm__ __volatile__ ("syscall"); // moved in from
+//         while (1); // never reached, needed to satisfy "noreturn" attribute
+// #else
+//         // this looping will grow the stack usage.
+//         raise_exception();
+// #endif
+//     }
+//
+//     struct rst_info rst_info;
+//     memset(&rst_info, 0, sizeof(rst_info));
+//     system_rtc_mem_read(0, &rst_info, sizeof(rst_info));
+//
+//     // amount of stack taken by interrupt or exception handler
+//     // and everything up to __wrap_system_restart_local
+//     // (determined empirically, might break)
+//     uint32_t offset = 0;
+//     bool interesting = true;
+//     if (rst_info.reason == REASON_SOFT_WDT_RST) {
+//         offset = 0x1b0;
+//     }
+//     else if (rst_info.reason == REASON_EXCEPTION_RST) {
+//         offset = 0x1a0;
+//     }
+//     else if (rst_info.reason == REASON_WDT_RST) {
+//         offset = 0x10;
+//     }
+//     else {
+//         // This way for:
+//         //   Power on - not likely
+//         //   Software/System restart *
+//         //   Deep-Sleep Wake *
+//         //   External System reset
+//         //
+//         // * these are the ones I think may pass by here.
+//         printf("\nSystem restart reason: %d\n", rst_info.reason);
+//         interesting = false;
+//     }
+//
+//     if (interesting)
+//         print_crash_report(&rst_info, sp_dump, offset, true);
+//
+//     ets_delay_us(10000);
+//     __real_system_restart_local();
+// }
 
 static void DEBUG_IRAM_ATTR print_stack(uint32_t start, uint32_t end) {
     for (uint32_t pos = start; pos < end; pos += 0x10) {
@@ -393,90 +463,38 @@ static void DEBUG_IRAM_ATTR print_stack(uint32_t start, uint32_t end) {
     }
 }
 
-#if 1
-#ifndef xt_rsil
-#define xt_rsil(level) (__extension__({uint32_t state; __asm__ __volatile__("rsil %0," __STRINGIFY(level) : "=a" (state)); state;}))
-#endif
 static void DEBUG_IRAM_ATTR raise_exception() {
-/*
-  This is old logic flow that I saw with `raise_exception()`:
+    if (gdb_present())
+        __asm__ __volatile__ ("syscall"); // triggers GDB when enabled
 
-  For ps.intlevel = 0:
-    * syscall - has not visable effect - call and returns.
-    * while(1) - sit and wait for soft wdt
-    * hit soft wdt - system passes control back to __wrap_system_restart_local
-    * postmortem prints everyone is happy
+    s_panic.user_reset_reason = REASON_USER_SWEXCEPTION_RST;
+    s_panic.user_reset_reason_str = PSTR("\nUser exception (panic/abort/assert)");
+    s_panic.log_mask = 0;
+    __wrap_system_restart_local();
 
-  For ps.intlevel != 0:
-    * syscall - has not visable effect - call and returns.
-    * while(1) - sit and wait for soft wdt
-    * hardware WDT stikes, __wrap_system_restart_local is never called
-    * postmortem never prints everyone is sad
-
-*/
-    printf("\nStarting to raise an exception to effect stack trace.\n");
-#ifdef DEBUG_ESP_ISR
-    s_panic.ps_reg = xt_rsr(ps);
-#endif
-    // __asm__ __volatile__ ("syscall"); This doesn't do anything I can see.
-    *((int*)0) = 0;
-
-    // This was used to cause the Soft WDT event.
     while (1); // never reached, needed to satisfy "noreturn" attribute
 }
 
-
-#else
-
-
-static void DEBUG_IRAM_ATTR fill_rst_info(struct rst_info *rst_info) {
-#if 0
-    memset(rst_info, 0, sizeof(struct rst_info));
-#else
-    rst_info->exccause = xt_rsr(EXCCAUSE);
-    rst_info->epc1 = xt_rsr(EPC1);
-    rst_info->epc2 = xt_rsr(EPC2);
-    rst_info->epc3 = xt_rsr(EPC3);
-    rst_info->excvaddr = xt_rsr(EXCVADDR);
-    rst_info->depc = xt_rsr(DEPC);
-#endif
-    rst_info->reason = REASON_SOFT_WDT_RST; // Fake it =3
-}
-
-/*
-  A more direct handling approach
-*/
-static void DEBUG_IRAM_ATTR raise_exception(void) {
-    register uint32_t sp asm("a1");
-    uint32_t sp_dump = sp;
-#ifdef DEBUG_ESP_ISR
-    s_panic.ps_reg = xt_rsr(ps);
-#endif
-    // Just in case interrupts are disabled, must generate debug info NOW. Note
-    // this would have followed the path of "Soft WDT reset". So make this look
-    // like a "Soft WDT reset"
-    struct rst_info rst_info;
-    fill_rst_info(&rst_info);
-    system_rtc_mem_write(0, &rst_info, sizeof(rst_info));
-    print_crash_report(&rst_info, sp_dump, 0, true);
-
-    // We need an exit that will cause the system to reboot.
-    // Maybe call __real_system_restart_local(); It waits for the tx FIFOs
-    // to empty and other stuff before calling system_restart_core().
-    // It looks like the right way to handle this.
-    ets_delay_us(10000);
-    /*
-      look at what prep is needed before calling this
-        maybe have a flag so __wrap_system_restart_local will pass straignt to
-        __real_system_restart_local.
-        Then we can just do a simpel system_restart - maybe
-    */
-    __real_system_restart_local(); // Should not return.
-    while (1); // never reached, needed to satisfy "noreturn" attribute
-}
-#endif
-
-
+//
+// static void DEBUG_IRAM_ATTR fill_rst_info(struct rst_info *rst_info) {
+// #if 0
+//     memset(rst_info, 0, sizeof(struct rst_info));
+// #else
+//     rst_info->exccause = xt_rsr(EXCCAUSE);
+//     rst_info->epc1 = xt_rsr(EPC1);
+//     rst_info->epc2 = xt_rsr(EPC2);
+//     rst_info->epc3 = xt_rsr(EPC3);
+//     rst_info->excvaddr = xt_rsr(EXCVADDR);
+//     rst_info->depc = xt_rsr(DEPC);
+// #endif
+//     rst_info->reason = REASON_SOFT_WDT_RST; // Fake it =3
+// }
+//     // Just in case interrupts are disabled, must generate debug info NOW. Note
+//     // this would have followed the path of "Soft WDT reset". So make this look
+//     // like a "Soft WDT reset"
+//     struct rst_info rst_info;
+//     fill_rst_info(&rst_info);
+//     system_rtc_mem_write(0, &rst_info, sizeof(rst_info));
 
 void DEBUG_IRAM_ATTR abort() {
     s_panic.abort_called = true;
@@ -486,6 +504,39 @@ void DEBUG_IRAM_ATTR abort() {
 void DEBUG_IRAM_ATTR __unhandled_exception(const char *str) {
     s_panic.unhandled_exception = str;
     raise_exception();
+}
+
+int DEBUG_IRAM_ATTR set_dbg_log_control(int mask){
+    int old = g_dbg_logging_control;
+    g_dbg_logging_control = mask;
+    return old;
+}
+
+void DEBUG_IRAM_ATTR __assert_log_func(const char *file, int line,
+                              const char *func, const char *what,
+                              int mask, uint32_t ps_reg) {
+
+    register uint32_t sp asm("a1");
+    uint32_t sp_dump = sp;
+    if (0 == (MSK_REPORT_FILTER_MASK & mask & g_dbg_logging_control))
+        return;
+
+    s_panic.file = file;
+    s_panic.line = line;
+    s_panic.func = func;
+    s_panic.what = what;
+    s_panic.log_mask = mask;
+    s_panic.ps_reg = ps_reg;
+    s_panic.user_reset_reason = REASON_USER_ASSERT_LOG;
+    if ((MSK_REPORT_ASSERT_LOG_GDB_BREAK & mask) ||
+        (MSK_REPORT_ASSERT_LOG_GDB_BREAK_ALL & g_dbg_logging_control))
+        gdb_do_break();     /* if GDB is not present, this is a no-op */
+
+    print_report(sp_dump);
+
+    // Ensure a direct call to system_restart_local() will have the right options.
+    s_panic.user_reset_reason = 0;
+    s_panic.log_mask = 0;
 }
 
 void DEBUG_IRAM_ATTR __assert_func(const char *file, int line, const char *func, const char *what) {
@@ -498,6 +549,8 @@ void DEBUG_IRAM_ATTR __assert_func(const char *file, int line, const char *func,
 }
 
 void DEBUG_IRAM_ATTR __panic_func(const char* file, int line, const char* func) {
+    // uint32_t log_mask = MSK_REPORT_NO_RETURN;
+    // __assert_log_func(file, line, func, 0, log_mask, 0);
     s_panic.file = file;
     s_panic.line = line;
     s_panic.func = func;
@@ -505,19 +558,25 @@ void DEBUG_IRAM_ATTR __panic_func(const char* file, int line, const char* func) 
     gdb_do_break();     /* if GDB is not present, this is a no-op */
     raise_exception();
 }
-
-#ifdef DEBUG_ESP_ISR
-void DEBUG_IRAM_ATTR inflight_stack_trace(uint32_t ps_reg) {
-    register uint32_t sp asm("a1");
-    uint32_t sp_dump = sp;
-    s_panic.ps_reg = ps_reg; //xt_rsr(PS);
-    struct rst_info rst_info;
-    fill_rst_info(&rst_info);
-    puts("\nPostmortem Infligth Stack Trace\n");
-    print_crash_report(&rst_info, sp_dump, 0, false);
-}
-#endif
+//
+// #ifdef DEBUG_ESP_ISR
+// void DEBUG_IRAM_ATTR inflight_stack_trace(uint32_t ps_reg) {
+//     register uint32_t sp asm("a1");
+//     uint32_t sp_dump = sp;
+//     s_panic.ps_reg = ps_reg; //xt_rsr(PS);
+//     struct rst_info rst_info;
+//     fill_rst_info(&rst_info);
+//     puts("\nPostmortem Infligth Stack Trace\n");
+//     print_crash_report(&rst_info, sp_dump, 0, false);
+// }
+// #endif
 };
+
+
+
+
+
+
 #else
 /*
  postmortem.c - output of debug info on sketch crash
@@ -573,8 +632,10 @@ static const char* s_unhandled_exception = NULL;
 
 void abort() __attribute__((noreturn));
 static void uart_write_char_d(char c);
+#ifndef DEBUG_ESP_PORT
 static void uart0_write_char_d(char c);
 static void uart1_write_char_d(char c);
+#endif
 static void print_stack(uint32_t start, uint32_t end);
 
 // using numbers different from "REASON_" in user_interface.h (=0..6)
@@ -611,7 +672,7 @@ static void ets_printf_P(const char *str, ...) {
     vsnprintf(destStr, sizeof(destStr), str, argPtr);
     va_end(argPtr);
     while (*c) {
-        ets_putc(*(c++));
+        uart_write_char_d(*(c++));
     }
 }
 
@@ -634,15 +695,12 @@ void __wrap_system_restart_local() {
     else
         rst_info.reason = s_user_reset_reason;
 
-    // TODO:  ets_install_putc1 definition is wrong in ets_sys.h, need cast
-    ets_install_putc1((void *)&uart_write_char_d);
-
     if (s_user_reset_reason_str) {
         ets_printf_P(s_user_reset_reason_str);
     }
 
     if (rst_info.reason != REASON_DEFAULT_RST) {
-        ets_printf_P(PSTR("\nPS register: 0x02X\n"), xt_rsr(PS));
+        ets_printf_P(PSTR("\nPS register: 0x%02X\n"), xt_rsr(PS));
     }
 
     if (s_panic_line) {
@@ -738,6 +796,32 @@ static void print_stack(uint32_t start, uint32_t end) {
     }
 }
 
+#ifdef DEBUG_ESP_PORT
+#define VALUE(x) __STRINGIFY(x)
+
+static void uart_write_char_d(char c) {
+    // Preprocessor and compiler together will optimize away the if.
+    if (strcmp("Serial", VALUE(DEBUG_ESP_PORT)) == 0) {
+      // USS - get uart{0,1} status word
+      // USTXC - bit offset to TX FIFO count, 8 bit field
+      // USF - Uart FIFO
+      // Wait for space for two or more characters.
+      while (((USS(0) >> USTXC) & 0xff) >= 0x7e) { }
+
+      if (c == '\n') {
+          USF(0) = '\r';
+      }
+      USF(0) = c;
+    } else {
+      while (((USS(1) >> USTXC) & 0xff) >= 0x7e) { }
+
+      if (c == '\n') {
+          USF(1) = '\r';
+      }
+      USF(1) = c;
+    }
+}
+#else
 static void uart_write_char_d(char c) {
     uart0_write_char_d(c);
     uart1_write_char_d(c);
@@ -760,6 +844,7 @@ static void uart1_write_char_d(char c) {
     }
     USF(1) = c;
 }
+#endif
 
 static void raise_exception() {
     if (gdb_present())
