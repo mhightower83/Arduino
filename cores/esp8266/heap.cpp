@@ -8,11 +8,33 @@
 #include <c_types.h>
 #include <sys/reent.h>
 
+
+#ifdef UMM_POISON_CHECK
+// These used in heap.cpp
+#define __umm_malloc(s)    umm_poison_malloc(s)
+#define __umm_calloc(n,s)  umm_poison_calloc(n,s)
+#define __umm_realloc(p,s) umm_poison_realloc(p,s)
+#define __umm_free(p)      umm_poison_free(p)
+
+#else  // ! UMM_POISON_CHECK
+#define __umm_malloc(s)    umm_malloc(s)
+#define __umm_calloc(n,s)  umm_calloc(n,s)
+#define __umm_realloc(p,s) umm_realloc(p,s)
+#define __umm_free(p)      umm_free(p)
+#endif  // UMM_POISON_CHECK
+
+
 extern "C" {
 
 // Debugging helper, last allocation which returned NULL
 void *umm_last_fail_alloc_addr = NULL;
 int umm_last_fail_alloc_size = 0;
+
+
+void ICACHE_RAM_ATTR free (void* p)
+{
+    __umm_free(p);
+}
 
 void* _malloc_r(struct _reent* unused, size_t size)
 {
@@ -90,29 +112,30 @@ static const char oom_fmt[]   PROGMEM STORE_ATTR = ":oom(%d)@?\n";
 static const char oom_fmt_1[] PROGMEM STORE_ATTR = ":oom(%d)@";
 static const char oom_fmt_2[] PROGMEM STORE_ATTR = ":%d\n";
 
-void* malloc (size_t s)
+void* ICACHE_RAM_ATTR malloc (size_t s)
 {
-    void* ret = umm_malloc(s);
+    void* ret = __umm_malloc(s);
     if (!ret)
         os_printf(oom_fmt, (int)s);
     return ret;
 }
 
-void* calloc (size_t n, size_t s)
+void* ICACHE_RAM_ATTR calloc (size_t n, size_t s)
 {
-    void* ret = umm_calloc(n, s);
+    void* ret = __umm_calloc(n, s);
     if (!ret)
         os_printf(oom_fmt, (int)s);
     return ret;
 }
 
-void* realloc (void* p, size_t s)
+void* ICACHE_RAM_ATTR realloc (void* p, size_t s)
 {
-    void* ret = umm_realloc(p, s);
+    void* ret = __umm_realloc(p, s);
     if (!ret)
         os_printf(oom_fmt, (int)s);
     return ret;
 }
+
 
 void print_loc (size_t s, const char* file, int line)
 {
@@ -123,7 +146,7 @@ void print_loc (size_t s, const char* file, int line)
 
 void* malloc_loc (size_t s, const char* file, int line)
 {
-    void* ret = umm_malloc(s);
+    void* ret = __umm_malloc(s);
     if (!ret)
         print_loc(s, file, line);
     return ret;
@@ -131,7 +154,7 @@ void* malloc_loc (size_t s, const char* file, int line)
 
 void* calloc_loc (size_t n, size_t s, const char* file, int line)
 {
-    void* ret = umm_calloc(n, s);
+    void* ret = __umm_calloc(n, s);
     if (!ret)
         print_loc(s, file, line);
     return ret;
@@ -139,13 +162,31 @@ void* calloc_loc (size_t n, size_t s, const char* file, int line)
 
 void* realloc_loc (void* p, size_t s, const char* file, int line)
 {
-    void* ret = umm_realloc(p, s);
+    void* ret = __umm_realloc(p, s);
     if (!ret)
         print_loc(s, file, line);
     return ret;
 }
 
 #else
+
+void* ICACHE_RAM_ATTR malloc (size_t s)
+{
+    void* ret = __umm_malloc(s);
+    return ret;
+}
+
+void* ICACHE_RAM_ATTR calloc (size_t n, size_t s)
+{
+    void* ret = __umm_calloc(n, s);
+    return ret;
+}
+
+void* ICACHE_RAM_ATTR realloc (void* p, size_t s)
+{
+    void* ret = __umm_realloc(p, s);
+    return ret;
+}
 
 void* ICACHE_RAM_ATTR pvPortMalloc(size_t size, const char* file, int line)
 {

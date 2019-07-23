@@ -1,34 +1,16 @@
-/*
- * umm_malloc performance measurments and ESP specifics
- */
+
+
 
 #include <stdio.h>
 #include <string.h>
 #include <pgmspace.h>
 #include <core_esp8266_features.h>
 #include "umm_performance.h"
+#include "umm_stats.h"
 
 extern "C" {
 
-#ifdef UMM_CRITICAL_PERIOD_ANALYZE
-struct _UMM_TIME_STATS time_stats = {
-  {0xFFFFFFFF, 0U, 0U, 0U},
-  {0xFFFFFFFF, 0U, 0U, 0U},
-  {0xFFFFFFFF, 0U, 0U, 0U},
-  {0xFFFFFFFF, 0U, 0U, 0U} };
-
-bool ICACHE_FLASH_ATTR get_umm_get_perf_data(struct _UMM_TIME_STATS *p, size_t size) {
-    if (p && sizeof(time_stats) == size) {
-        uint32_t save_ps = xt_rsil(DEFAULT_CRITICAL_SECTION_INTLEVEL);
-        memcpy(p, &time_stats, size);
-        xt_wsr_ps(save_ps);
-        return true;
-    }
-    return false;
-}
-#endif
-
-#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
+//D #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
 /*
   Printing from the malloc routines is tricky. Since a lot of library calls
   will want to do malloc.
@@ -74,5 +56,57 @@ int ICACHE_RAM_ATTR _isr_safe_printf_P(const char *fmt, ...) {
 }
 
 #endif
+
+#ifdef DEBUG_ESP_PORT
+#define VALUE(x) __STRINGIFY(x)
+
+void ICACHE_RAM_ATTR uart_write_char_d(char c) {
+    // Preprocessor and compiler together will optimize away the if.
+    if (strcmp("Serial", VALUE(DEBUG_ESP_PORT)) == 0) {
+      // USS - get uart{0,1} status word
+      // USTXC - bit offset to TX FIFO count, 8 bit field
+      // USF - Uart FIFO
+      // Wait for space for two or more characters.
+      while (((USS(0) >> USTXC) & 0xff) >= 0x7e) { }
+
+      if (c == '\n') {
+          USF(0) = '\r';
+      }
+      USF(0) = c;
+    } else {
+      while (((USS(1) >> USTXC) & 0xff) >= 0x7e) { }
+
+      if (c == '\n') {
+          USF(1) = '\r';
+      }
+      USF(1) = c;
+    }
+}
+#else
+void ICACHE_RAM_ATTR uart_write_char_d(char c) {
+    uart0_write_char_d(c);
+    uart1_write_char_d(c);
+}
+
+void ICACHE_RAM_ATTR uart0_write_char_d(char c) {
+    while (((USS(0) >> USTXC) & 0xff)) { }
+
+    if (c == '\n') {
+        USF(0) = '\r';
+    }
+    USF(0) = c;
+}
+
+void ICACHE_RAM_ATTR uart1_write_char_d(char c) {
+    while (((USS(1) >> USTXC) & 0xff) >= 0x7e) { }
+
+    if (c == '\n') {
+        USF(1) = '\r';
+    }
+    USF(1) = c;
+}
+
+
+//D #endif
 
 };
