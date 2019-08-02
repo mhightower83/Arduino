@@ -95,7 +95,10 @@ clean:
  *
  * `size_w_poison` is a size of the whole block, including a poison.
  */
-static void *get_poisoned( unsigned char *ptr, size_t size_w_poison ) {
+// static void *get_poisoned( unsigned char *ptr, size_t size_w_poison ) {
+static void *get_poisoned( void *v_ptr, size_t size_w_poison ) {
+  unsigned char *ptr = (unsigned char *)v_ptr;
+
   if (size_w_poison != 0 && ptr != NULL) {
 
     /* Poison beginning and the end of the allocated chunk */
@@ -108,9 +111,9 @@ static void *get_poisoned( unsigned char *ptr, size_t size_w_poison ) {
     *(UMM_POISONED_BLOCK_LEN_TYPE *)ptr = (UMM_POISONED_BLOCK_LEN_TYPE)size_w_poison;
 
     /* Return pointer at the first non-poisoned byte */
-    return ptr + sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE;
+    return (void *)(ptr + sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE);
   } else {
-    return ptr;
+    return (void *)ptr;
   }
 }
 
@@ -120,7 +123,10 @@ static void *get_poisoned( unsigned char *ptr, size_t size_w_poison ) {
  *
  * Returns unpoisoned pointer, i.e. actual pointer to the allocated memory.
  */
-static void *get_unpoisoned( unsigned char *ptr ) {
+// static void *get_unpoisoned( unsigned char *ptr ) {
+static void *get_unpoisoned( void *v_ptr ) {
+  unsigned char *ptr = (unsigned char *)v_ptr;
+
   if (ptr != NULL) {
     unsigned short int c;
 
@@ -132,7 +138,7 @@ static void *get_unpoisoned( unsigned char *ptr ) {
     check_poison_block(&UMM_BLOCK(c));
   }
 
-  return ptr;
+  return (void *)ptr;
 }
 
 /* }}} */

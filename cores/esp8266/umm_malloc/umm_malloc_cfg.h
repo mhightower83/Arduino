@@ -332,21 +332,21 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
 
 #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
 #define UMM_POISON_CHECK
+// Note, UMM_POISON is deprecated
+#define UMM_POISON
 #endif
 
 #if defined(UMM_POISON_CHECK)
 #if !defined(DBGLOG_LEVEL) || DBGLOG_LEVEL < 3
 // All debug prints in UMM_POISON_CHECK are level 3
-#unset DBGLOG_LEVEL
+#undef DBGLOG_LEVEL
 #define DBGLOG_LEVEL 3
 #endif
 #endif
 
-//+ TODO: support printing +//
 #undef DBGLOG_FUNCTION
-#define DBGLOG_FUNCTION local_printf
-#define local_printf(...)
-
+int _isr_safe_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+#define DBGLOG_FUNCTION(fmt, ...) _isr_safe_printf_P(PSTR(fmt), ##__VA_ARGS__)
 
 /////////////////////////////////////////////////
 

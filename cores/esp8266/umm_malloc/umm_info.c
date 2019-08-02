@@ -32,7 +32,7 @@ void *umm_info( void *ptr, int force ) {
   memset( &ummHeapInfo, 0, sizeof( ummHeapInfo ) );
 
   DBGLOG_FORCE( force, "+----------+-------+--------+--------+-------+--------+--------+\n" );
-  DBGLOG_FORCE( force, "|0x%08lx|B %5i|NB %5i|PB %5i|Z %5i|NF %5i|PF %5i|\n",
+  DBGLOG_FORCE( force, "|0x%08lx|B %5d|NB %5d|PB %5d|Z %5d|NF %5d|PF %5d|\n",
       (unsigned long)(&UMM_BLOCK(blockNo)),
       blockNo,
       UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK,
@@ -69,7 +69,7 @@ void *umm_info( void *ptr, int force ) {
         ummHeapInfo.maxFreeContiguousBlocks = curBlocks;
       }
 
-      DBGLOG_FORCE( force, "|0x%08lx|B %5i|NB %5i|PB %5i|Z %5u|NF %5i|PF %5i|\n",
+      DBGLOG_FORCE( force, "|0x%08lx|B %5d|NB %5d|PB %5d|Z %5u|NF %5d|PF %5d|\n",
           (unsigned long)(&UMM_BLOCK(blockNo)),
           blockNo,
           UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK,
@@ -91,7 +91,7 @@ void *umm_info( void *ptr, int force ) {
       ++ummHeapInfo.usedEntries;
       ummHeapInfo.usedBlocks += curBlocks;
 
-      DBGLOG_FORCE( force, "|0x%08lx|B %5i|NB %5i|PB %5i|Z %5u|\n",
+      DBGLOG_FORCE( force, "|0x%08lx|B %5d|NB %5d|PB %5d|Z %5u|\n",
           (unsigned long)(&UMM_BLOCK(blockNo)),
           blockNo,
           UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK,
@@ -117,7 +117,7 @@ void *umm_info( void *ptr, int force ) {
     }
   }
 
-  DBGLOG_FORCE( force, "|0x%08lx|B %5i|NB %5i|PB %5i|Z %5i|NF %5i|PF %5i|\n",
+  DBGLOG_FORCE( force, "|0x%08lx|B %5d|NB %5d|PB %5d|Z %5d|NF %5d|PF %5d|\n",
       (unsigned long)(&UMM_BLOCK(blockNo)),
       blockNo,
       UMM_NBLOCK(blockNo) & UMM_BLOCKNO_MASK,
@@ -128,12 +128,12 @@ void *umm_info( void *ptr, int force ) {
 
   DBGLOG_FORCE( force, "+----------+-------+--------+--------+-------+--------+--------+\n" );
 
-  DBGLOG_FORCE( force, "Total Entries %5i    Used Entries %5i    Free Entries %5i\n",
+  DBGLOG_FORCE( force, "Total Entries %5d    Used Entries %5d    Free Entries %5d\n",
       ummHeapInfo.totalEntries,
       ummHeapInfo.usedEntries,
       ummHeapInfo.freeEntries );
 
-  DBGLOG_FORCE( force, "Total Blocks  %5i    Used Blocks  %5i    Free Blocks  %5i\n",
+  DBGLOG_FORCE( force, "Total Blocks  %5d    Used Blocks  %5d    Free Blocks  %5d\n",
       ummHeapInfo.totalBlocks,
       ummHeapInfo.usedBlocks,
       ummHeapInfo.freeBlocks  );
@@ -142,14 +142,15 @@ void *umm_info( void *ptr, int force ) {
 
 #ifdef UMM_STATS
   if (ummHeapInfo.freeBlocks == ummStats.free_blocks) {
-      DBGLOG_FORCE( force, "umm_info Free Blocks and umm stats Free Blocks match.\n");
+      DBGLOG_FORCE( force, "heap info Free blocks and heap statistics Free blocks match.\n");
   } else {
-      DBGLOG_FORCE( force, "\nFree Blocks  %5d != umm stats Free Blocks  %5d\n\n",
+      DBGLOG_FORCE( force, "\nheap info Free blocks  %5d != heap statistics Free Blocks  %5d\n\n",
           ummHeapInfo.freeBlocks,
           ummStats.free_blocks  );
   }
+  DBGLOG_FORCE( force, "+--------------------------------------------------------------+\n" );
 
-  DBGLOG_FORCE( force, "\numm stats:\n");
+  DBGLOG_FORCE( force, "umm heap statistics:\n");
   DBGLOG_FORCE( force,   "  Free Space        %5u\n", ummStats.free_blocks * sizeof(umm_block));
   DBGLOG_FORCE( force,   "  Low Watermark     %5u\n", ummStats.free_blocks_min * sizeof(umm_block));
   DBGLOG_FORCE( force,   "  MAX Alloc Request %5u\n", ummStats.alloc_max_size);

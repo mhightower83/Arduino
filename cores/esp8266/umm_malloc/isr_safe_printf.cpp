@@ -5,12 +5,10 @@
 #include <string.h>
 #include <pgmspace.h>
 #include <core_esp8266_features.h>
-#include "umm_performance.h"
-#include "umm_stats.h"
 
 extern "C" {
 
-//D #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_ISR)
+#if 1
 /*
   Printing from the malloc routines is tricky. Since a lot of library calls
   will want to do malloc.
@@ -54,8 +52,9 @@ int ICACHE_RAM_ATTR _isr_safe_printf_P(const char *fmt, ...) {
   va_end(argPtr);
   return result;
 }
-
 #endif
+
+#if 0
 
 #ifdef DEBUG_ESP_PORT
 #define VALUE(x) __STRINGIFY(x)
@@ -82,7 +81,7 @@ void ICACHE_RAM_ATTR uart_write_char_d(char c) {
       USF(1) = c;
     }
 }
-#else
+#else // ! DEBUG_ESP_PORT
 void ICACHE_RAM_ATTR uart_write_char_d(char c) {
     uart0_write_char_d(c);
     uart1_write_char_d(c);
@@ -105,8 +104,8 @@ void ICACHE_RAM_ATTR uart1_write_char_d(char c) {
     }
     USF(1) = c;
 }
+#endif
 
-
-//D #endif
+#endif
 
 };
