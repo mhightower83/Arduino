@@ -111,10 +111,10 @@ static void *get_poisoned( void *v_ptr, size_t size_w_poison ) {
     *(UMM_POISONED_BLOCK_LEN_TYPE *)ptr = (UMM_POISONED_BLOCK_LEN_TYPE)size_w_poison;
 
     /* Return pointer at the first non-poisoned byte */
-    return (void *)(ptr + sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE);
-  } else {
-    return (void *)ptr;
+    ptr += sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE;
   }
+
+  return (void *)ptr;
 }
 
 /*
@@ -135,7 +135,9 @@ static void *get_unpoisoned( void *v_ptr ) {
     /* Figure out which block we're in. Note the use of truncated division... */
     c = (((char *)ptr)-(char *)(&(umm_heap[0])))/sizeof(umm_block);
 
-    check_poison_block(&UMM_BLOCK(c));
+    if (!check_poison_block(&UMM_BLOCK(c))) {
+      UMM_HEAP_POISON_CB();
+    }
   }
 
   return (void *)ptr;
@@ -205,12 +207,15 @@ void umm_poison_free( void *ptr ) {
  */
 
 int umm_poison_check(void) {
+  UMM_CRITICAL_DECL(id_poison);
   int ok = 1;
   unsigned short int cur;
 
   if (umm_heap == NULL) {
     umm_init();
   }
+
+  UMM_CRITICAL_ENTRY(id_poison);
 
   /* Now iterate through the blocks list */
   cur = UMM_NBLOCK(0) & UMM_BLOCKNO_MASK;
@@ -226,6 +231,7 @@ int umm_poison_check(void) {
 
     cur = UMM_NBLOCK(cur) & UMM_BLOCKNO_MASK;
   }
+  UMM_CRITICAL_EXIT(id_poison);
 
   return ok;
 }

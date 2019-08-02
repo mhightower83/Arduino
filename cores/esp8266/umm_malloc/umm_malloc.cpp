@@ -30,6 +30,10 @@
  *   Resolved C++ compiler error reported on get_poisoned(), and
  *   get_unpoisoned(). They now take in void * arg instead of unsigned char *.
  *
+ * In umm_integrity.c:
+ *   Replaced printf with DBGLOG_FUNCTION. This needs to be a malloc free
+ *   function and ISR safe.
+ *   Add critical sections.
  *
  * In umm_malloc_cfg.h:
  *   Added UMM_CRITICAL_SUSPEND()/UMM_CRITICAL_RESUME()
@@ -40,22 +44,33 @@
  *
  * Notes,
  *
- *   umm_integrity_check() in umm_integrity.c needs a critical section.
- *   It also is still using printf instead of the DBGLOG_... macro.
- *   Looks to be primarily for testing during development of the malloc
- *   library. May also be useful in exterm heap corruption cases.
- *   Does not appear ready fo inclusion at this time,
+ *   umm_integrity_check() is called by macro INTEGRITY_CHECK which returns 1
+ *   on success. No corruption. Does a time consuming scan of the whole heap. It
+ *   will call UMM_HEAP_CORRUPTION_CB if an error is found.
  *
- *   umm_poison_check() in umm_poison.c needs a critical section.
+ *   umm_poison_check(), formerly known as check_poison_all_blocks(),
+ *   is called by macro POISON_CHECK which returns 1 on success. No corruption.
+ *   Does a time consuming scan of all active allocations for modified poison.
+ *   It does *NOT* call UMM_HEAP_CORRUPTION_CB if an error is found.
+ *   The option description says it does!
+ *
+ *   For upstream umm_malloc "#  define POISON_CHECK() 0" should have been 1
+ *   add to list to report.
+ */
+/*
+ * Current Deltas from the old umm_malloc
+ *
+ *   umm_posion check for a given *alloc - failure no longer panics.
+ *   option to run full poison check at each *alloc call, not present
+ *   option to run full interity check at each *alloc call, not present
+ *   upstream code does not call panic from poison_check_block.
  *
  */
 
 
-
-#define _UMM_MALLOC_CPP
 extern "C" {
 
+#define UMM_MALLOC_C
 #include "umm_malloc.c"
-
 
 };

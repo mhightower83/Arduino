@@ -27,7 +27,9 @@
  * ----------------------------------------------------------------------------
  */
 
-#if defined(_UMM_MALLOC_CPP)
+// This helps prevent Arduino IDE build dependencies from compiling the .c
+// outside of umm_malloc.cpp.
+#if defined(UMM_MALLOC_C)
 
 #include <stdio.h>
 #include <string.h>

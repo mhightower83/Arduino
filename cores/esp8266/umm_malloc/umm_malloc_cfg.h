@@ -53,26 +53,14 @@ extern "C" {
  */
 
 /////////////////////////////////////////////////
-#ifdef DEBUG_ESP_OOM
-
-#define MEMLEAK_DEBUG
-
-// umm_*alloc are not renamed to *alloc
-// Assumes umm_malloc.h has already been included.
-
-#define umm_zalloc(s) umm_calloc(1,s)
-
-void* malloc_loc (size_t s, const char* file, int line);
-void* calloc_loc (size_t n, size_t s, const char* file, int line);
-void* realloc_loc (void* p, size_t s, const char* file, int line);
-
-// *alloc are macro calling *alloc_loc calling+checking umm_*alloc()
-// they are defined at the bottom of this file
-
+#undef DBGLOG_FUNCTION
+#undef DBGLOG_FUNCTION_P
+int _isr_safe_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+// Note, _isr_safe_printf_P will not handle additional string arguments in
+// PROGMEM. Only the 1st parameter, fmt, is supported in PROGMEM.
+#define DBGLOG_FUNCTION(fmt, ...) _isr_safe_printf_P(PSTR(fmt), ##__VA_ARGS__)
+#define DBGLOG_FUNCTION_P(fmt, ...) _isr_safe_printf_P(fmt, ##__VA_ARGS__)
 /////////////////////////////////////////////////
-#else // !defined(ESP_DEBUG_OOM)
-#endif
-
 
 /* Start addresses and the size of the heap */
 extern char _heap_start[];
@@ -154,26 +142,26 @@ size_t ICACHE_FLASH_ATTR umm_free_heap_size_lw( void );
 size_t ICACHE_FLASH_ATTR umm_free_heap_size_lw_min( void );
 size_t ICACHE_FLASH_ATTR umm_free_heap_size_min_reset( void );
 
-inline size_t umm_get_max_alloc_size( void ) {
+static inline size_t ICACHE_FLASH_ATTR umm_get_max_alloc_size( void ) {
   return ummStats.alloc_max_size;
 }
 
-inline size_t umm_get_oom_count( void ) {
+static inline size_t ICACHE_FLASH_ATTR umm_get_oom_count( void ) {
   return ummStats.oom_count;
 }
 
-inline size_t umm_free_heap_size_min( void ) {
+static inline size_t ICACHE_FLASH_ATTR umm_free_heap_size_min( void ) {
   return umm_free_heap_size_lw_min();
 }
 #else
 #endif
 
 #ifdef UMM_INFO
-inline size_t umm_free_heap_size( void ) {
+static inline size_t ICACHE_FLASH_ATTR umm_free_heap_size( void ) {
   return umm_free_heap_size_info();
 }
 #else
-inline size_t umm_free_heap_size( void ) {
+static inline size_t ICACHE_FLASH_ATTR umm_free_heap_size( void ) {
   return umm_free_heap_size_lw();
 }
 #endif
@@ -204,6 +192,7 @@ inline size_t umm_free_heap_size( void ) {
 
 #if defined(UMM_CRITICAL_METRICS)
 // This option adds support for gathering time locked data
+
 typedef struct UMM_TIME_STAT_t {
   uint32_t min;
   uint32_t max;
@@ -212,14 +201,18 @@ typedef struct UMM_TIME_STAT_t {
 }
 UMM_TIME_STAT;
 
-typedef struct UMM_TIME_STATS_t {
-  UMM_TIME_STAT id_malloc;
-  UMM_TIME_STAT id_realloc;
-  UMM_TIME_STAT id_free;
-  UMM_TIME_STAT id_info;
-  UMM_TIME_STAT id_no_tag;
-}
-UMM_TIME_STATS;
+//M This struct is defined later once all the build options have been selected.
+//M typedef struct UMM_TIME_STATS_t {
+//M   UMM_TIME_STAT id_malloc;
+//M   UMM_TIME_STAT id_realloc;
+//M   UMM_TIME_STAT id_free;
+//M   UMM_TIME_STAT id_info;
+//M   UMM_TIME_STAT id_poison;
+//M   UMM_TIME_STAT id_integrity;
+//M   UMM_TIME_STAT id_no_tag;
+//M }
+//M UMM_TIME_STATS;
+typedef struct UMM_TIME_STATS_t UMM_TIME_STATS;
 
 extern UMM_TIME_STATS time_stats;
 
@@ -322,7 +315,7 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
    int umm_integrity_check( void );
 #  define INTEGRITY_CHECK() umm_integrity_check()
    extern void umm_corruption(void);
-#  define UMM_HEAP_CORRUPTION_CB() printf( "Heap Corruption!" )
+#  define UMM_HEAP_CORRUPTION_CB() DBGLOG_FUNCTION( "Heap Corruption!" )
 #else
 #  define INTEGRITY_CHECK() 0
 #endif
@@ -336,7 +329,7 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
 #define UMM_POISON
 #endif
 
-#if defined(UMM_POISON_CHECK)
+#if defined(UMM_POISON_CHECK) || defined(UMM_INTEGRITY_CHECK)
 #if !defined(DBGLOG_LEVEL) || DBGLOG_LEVEL < 3
 // All debug prints in UMM_POISON_CHECK are level 3
 #undef DBGLOG_LEVEL
@@ -344,10 +337,24 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
 #endif
 #endif
 
-#undef DBGLOG_FUNCTION
-int _isr_safe_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
-#define DBGLOG_FUNCTION(fmt, ...) _isr_safe_printf_P(PSTR(fmt), ##__VA_ARGS__)
 
+#if defined(UMM_CRITICAL_METRICS)
+struct UMM_TIME_STATS_t {
+  UMM_TIME_STAT id_malloc;
+  UMM_TIME_STAT id_realloc;
+  UMM_TIME_STAT id_free;
+#ifdef UMM_INFO
+  UMM_TIME_STAT id_info;
+#endif
+#ifdef UMM_POISON_CHECK
+  UMM_TIME_STAT id_poison;
+#endif
+#ifdef UMM_INTEGRITY_CHECK
+  UMM_TIME_STAT id_integrity;
+#endif
+  UMM_TIME_STAT id_no_tag;
+};
+#endif
 /////////////////////////////////////////////////
 
 /*
@@ -388,12 +395,42 @@ int _isr_safe_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)
    void *umm_poison_realloc( void *ptr, size_t size );
    void  umm_poison_free( void *ptr );
    int   umm_poison_check( void );
-#  define POISON_CHECK() umm_poison_check()
+   #  define POISON_CHECK() umm_poison_check()
+   // Local Additions and changes
+   void *umm_poison_realloc_fl( void *ptr, size_t size, const char* file, int line );
+   void  umm_poison_free_fl( void *ptr, const char* file, int line );
+   extern int umm_poison_check_result;
+#  define UMM_HEAP_POISON_CB() umm_poison_check_result = 0
 #else
-#  define POISON_CHECK() 0
+#  define POISON_CHECK() 1
+#  define UMM_HEAP_POISON_CB() do{}while(0)
 #endif
 
-#define UMM_HEAP_CORRUPTION_CB() panic()
+// #define UMM_HEAP_CORRUPTION_CB() panic()
+
+/////////////////////////////////////////////////
+#ifdef DEBUG_ESP_OOM
+
+#define MEMLEAK_DEBUG
+
+// umm_*alloc are not renamed to *alloc
+// Assumes umm_malloc.h has already been included.
+
+#define umm_zalloc(s) umm_calloc(1,s)
+
+void* malloc_loc (size_t s, const char* file, int line);
+void* calloc_loc (size_t n, size_t s, const char* file, int line);
+void* realloc_loc (void* p, size_t s, const char* file, int line);
+// *alloc are macro calling *alloc_loc calling+checking umm_*alloc()
+// they are defined at the bottom of this file
+
+/////////////////////////////////////////////////
+
+#elif defined(UMM_POISON_CHECK)
+void* realloc_loc (void* p, size_t s, const char* file, int line);
+void  free_loc (void* p, const char* file, int line);
+#else // !defined(ESP_DEBUG_OOM)
+#endif
 
 #ifdef __cplusplus
 }
@@ -409,4 +446,9 @@ int _isr_safe_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)
 #define malloc(s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; malloc_loc(s, mem_debug_file, __LINE__); })
 #define calloc(n,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; calloc_loc(n, s, mem_debug_file, __LINE__); })
 #define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; realloc_loc(p, s, mem_debug_file, __LINE__); })
+
+#elif defined(UMM_POISON_CHECK)
+#define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; realloc_loc(p, s, mem_debug_file, __LINE__); })
+#define free(p) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; free_loc(p, mem_debug_file, __LINE__); })
+
 #endif /* DEBUG_ESP_OOM */
