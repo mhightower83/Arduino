@@ -64,7 +64,7 @@ int _isr_safe_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)
 
 /* Start addresses and the size of the heap */
 extern char _heap_start[];
-#define UMM_MALLOC_CFG_HEAP_ADDR   ((uint32_t)&_heap_start)
+#define UMM_MALLOC_CFG_HEAP_ADDR   ((uint32_t)&_heap_start[0])
 #define UMM_MALLOC_CFG_HEAP_SIZE   ((size_t)(0x3fffc000 - UMM_MALLOC_CFG_HEAP_ADDR))
 
 /* A couple of macros to make packing structures less compiler dependent */
@@ -443,12 +443,15 @@ void  free_loc (void* p, const char* file, int line);
 // because Arduino.h's <cstdlib> does #undef *alloc
 // Arduino.h recall us to redefine them
 #include <pgmspace.h>
-#define malloc(s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; malloc_loc(s, mem_debug_file, __LINE__); })
-#define calloc(n,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; calloc_loc(n, s, mem_debug_file, __LINE__); })
-#define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; realloc_loc(p, s, mem_debug_file, __LINE__); })
+// #define malloc(s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; malloc_loc(s, mem_debug_file, __LINE__); })
+// #define calloc(n,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; calloc_loc(n, s, mem_debug_file, __LINE__); })
+// #define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; realloc_loc(p, s, mem_debug_file, __LINE__); })
+#define malloc(s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; pvPortMalloc(s, mem_debug_file, __LINE__); })
+#define calloc(n,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; pvPortCalloc(n, s, mem_debug_file, __LINE__); })
+#define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; pvPortRealloc(p, s, mem_debug_file, __LINE__); })
 
 #elif defined(UMM_POISON_CHECK)
-#define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; realloc_loc(p, s, mem_debug_file, __LINE__); })
-#define free(p) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; free_loc(p, mem_debug_file, __LINE__); })
+#define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; pvPortRealloc(p, s, mem_debug_file, __LINE__); })
+#define free(p) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; vPortFree(p, mem_debug_file, __LINE__); })
 
 #endif /* DEBUG_ESP_OOM */

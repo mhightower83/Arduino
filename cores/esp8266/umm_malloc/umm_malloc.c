@@ -93,7 +93,7 @@ unsigned short int umm_numblocks = 0;
 #include "umm_integrity.c"
 #include "umm_poison.c"
 #include "umm_info.c"
-#include "umm_local.c"
+#include "umm_local.c"      // user-dependent supplemental features
 
 /* ------------------------------------------------------------------------ */
 
