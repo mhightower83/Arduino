@@ -132,7 +132,11 @@ extern char _heap_start[];
 typedef struct UMM_STATISTICS_t {
   unsigned short int free_blocks;
   unsigned short int free_blocks_min;
+  unsigned short int free_blocks_isr_min;
+  unsigned short int prev_block_max;
   size_t alloc_max_size;
+  size_t id_malloc_count;
+  size_t id_realloc_count;
   size_t oom_count;
 }
 UMM_STATISTICS;
@@ -151,9 +155,55 @@ static inline size_t ICACHE_FLASH_ATTR umm_get_oom_count( void ) {
 }
 
 static inline size_t ICACHE_FLASH_ATTR umm_free_heap_size_min( void ) {
-  return umm_free_heap_size_lw_min();
+  return ummStats.free_blocks_min * umm_block_size();
 }
-#else
+
+static inline size_t ICACHE_FLASH_ATTR umm_free_heap_size_isr_min( void ) {
+  return ummStats.free_blocks_isr_min * umm_block_size();
+}
+
+static inline size_t ICACHE_FLASH_ATTR umm_get_malloc_count( void ) {
+  return ummStats.id_malloc_count;
+}
+
+static inline size_t ICACHE_FLASH_ATTR umm_get_realloc_count( void ) {
+  return ummStats.id_realloc_count;
+}
+
+static inline size_t ICACHE_FLASH_ATTR umm_get_prev_block_max( void ) {
+  return ummStats.prev_block_max * umm_block_size();
+}
+
+
+#define STATS__FREE_BLOCKS_UPDATE(s) ummStats.free_blocks += (s)
+
+#define STATS__FREE_BLOCKS_MIN() \
+    if (ummStats.free_blocks < ummStats.free_blocks_min) \
+        ummStats.free_blocks_min = ummStats.free_blocks
+
+#define STATS__FREE_BLOCKS_ISR_MIN() \
+    if (ummStats.free_blocks < ummStats.free_blocks_isr_min) \
+        ummStats.free_blocks_isr_min = ummStats.free_blocks
+
+#define STATS__ALLOC_REQUEST(tag, s)  \
+{ \
+    ummStats.tag##_count += 1; \
+    if (ummStats.alloc_max_size < s) \
+        ummStats.alloc_max_size = s; \
+}
+
+#define STATS__PREV_BLOCKS_MAX(s) \
+    if (ummStats.prev_block_max < s) \
+        ummStats.prev_block_max = s
+
+#define STATS__OOM_UPDATE() ummStats.oom_count += 1
+
+#else  // ! UMM_STATS
+#define STATS__FREE_BLOCKS_UPDATE(s) ((void)s)
+#define STATS__FREE_BLOCKS_MIN() ((void)0)
+#define STATS__FREE_BLOCKS_ISR_MIN() ((void)0)
+#define STATS__ALLOC_REQUEST(tag, s) ((void)s)
+#define STATS__OOM_UPDATE() ((void)0)
 #endif
 
 #ifdef UMM_INFO
@@ -295,6 +345,10 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
  #define UMM_CRITICAL_RESUME(tag)
  #endif
 
+// TODO: Needs a description - currently it is missing support for UMM_LIGHTWEIGHT_CPU
+// #define UMM_EMPHASIZE_MINIMIZE_COPY
+
+
 /*
  * -D UMM_INTEGRITY_CHECK :
  *
@@ -309,6 +363,7 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
  * for corruption.
  */
 
+// Not normally enabled. Full intergity check may exceed 10us.
 // #define UMM_INTEGRITY_CHECK
 
 #ifdef UMM_INTEGRITY_CHECK
@@ -395,8 +450,11 @@ struct UMM_TIME_STATS_t {
    void *umm_poison_realloc( void *ptr, size_t size );
    void  umm_poison_free( void *ptr );
    int   umm_poison_check( void );
-   #  define POISON_CHECK() umm_poison_check()
-   // Local Additions and changes
+   // Not normally enabled.  A full heap poison check may exceed 10us.
+   // We can safely do individual poison checks at free and realloc.
+   // #  define POISON_CHECK() umm_poison_check()
+   #  define POISON_CHECK() 1
+   // Local Additions to better report location in code of the caller.
    void *umm_poison_realloc_fl( void *ptr, size_t size, const char* file, int line );
    void  umm_poison_free_fl( void *ptr, const char* file, int line );
    extern int umm_poison_check_result;
@@ -443,9 +501,7 @@ void  free_loc (void* p, const char* file, int line);
 // because Arduino.h's <cstdlib> does #undef *alloc
 // Arduino.h recall us to redefine them
 #include <pgmspace.h>
-// #define malloc(s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; malloc_loc(s, mem_debug_file, __LINE__); })
-// #define calloc(n,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; calloc_loc(n, s, mem_debug_file, __LINE__); })
-// #define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; realloc_loc(p, s, mem_debug_file, __LINE__); })
+// Reuse pvPort* calls, since they already support passing location information.
 extern "C" {
 void* ICACHE_RAM_ATTR pvPortMalloc(size_t size, const char* file, int line);
 void* ICACHE_RAM_ATTR pvPortCalloc(size_t count, size_t size, const char* file, int line);
@@ -456,9 +512,16 @@ void  ICACHE_RAM_ATTR vPortFree(void *ptr, const char* file, int line);
 #define malloc(s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; pvPortMalloc(s, mem_debug_file, __LINE__); })
 #define calloc(n,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; pvPortCalloc(n, s, mem_debug_file, __LINE__); })
 #define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; pvPortRealloc(p, s, mem_debug_file, __LINE__); })
+  #if defined(UMM_POISON_CHECK)
+  #define free(p) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; vPortFree(p, mem_debug_file, __LINE__); })
+  #endif
 
 #elif defined(UMM_POISON_CHECK)
+#include <pgmspace.h>
+extern "C" {
+void* ICACHE_RAM_ATTR pvPortRealloc(void *ptr, size_t size, const char* file, int line);
+void  ICACHE_RAM_ATTR vPortFree(void *ptr, const char* file, int line);
+};
 #define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; pvPortRealloc(p, s, mem_debug_file, __LINE__); })
 #define free(p) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; vPortFree(p, mem_debug_file, __LINE__); })
-
 #endif /* DEBUG_ESP_OOM */

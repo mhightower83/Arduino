@@ -22,6 +22,10 @@ void *umm_info( void *ptr, int force ) {
 
   unsigned short int blockNo = 0;
 
+  if (umm_heap == NULL) {
+    umm_init();
+  }
+
   /* Protect the critical section... */
   UMM_CRITICAL_ENTRY(id_info);
 
@@ -178,11 +182,13 @@ size_t umm_max_block_size( void ) {
   return ummHeapInfo.maxFreeContiguousBlocks * sizeof(umm_block);
 }
 
+/* ------------------------------------------------------------------------ */
+#endif
+
+#if defined(UMM_STATS) || defined(UMM_INFO)
 size_t umm_block_size( void ) {
   return sizeof(umm_block);
 }
-
-/* ------------------------------------------------------------------------ */
 #endif
 
 #ifdef UMM_STATS

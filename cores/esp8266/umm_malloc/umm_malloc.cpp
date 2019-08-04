@@ -24,6 +24,7 @@
  * In umm_info.c
  *   umm_info() - Added UMM_CRITICAL_DECL(id_info), updated critical sections
  *   with tag.
+ *   Carried forward: Added NULL ptr check at beginning (umm_malloc.c). Mar 8, 2016
  *
  *
  * In umm_poison.c:

@@ -4,6 +4,7 @@
  * Meant to be a print from anywhere and work. There will be more limitations
  * than your typical printf function.
  *
+ * Still researching options for printing.
  */
 
 /*
@@ -21,6 +22,26 @@
   * can be called from with in a critical section, eg. xt_rsil(15);
     * this may be effectively the same as being called from an ISR?
 
+  Knowns:
+  * ets_printf - in ROM is not safe corrupts heap, this was meantioned in
+    rtos SDK. Rtos SDK corrects this by redefining ROM address for ets_vprintf
+    to ets_io_vprintf through LD table and creates a traditional vprintf
+    function using it.
+    Rtos SDK replaces ets_printf with local function in IRAM using ROM
+    ets_io_vprintf with SDK defined serial print drivers. Source in rtos SDK.
+    * Why did they not use the ROM "serial print drivers"? Is there a problem
+      with them? igrr also didn't use them in ...postmortem.
+  * ets_vprintf - by it self is safe.
+  * newlibc printf - not safe - lives in flash.
+  * newlibc snprintf - not safe - lives in flash.
+
+  Research TODO, Unknowns:
+  * ets_printf_plus - is it safe?
+    * check if it uses alloc?
+    * confirmed it is in IRAM in SDK!
+  * Is there a problem with ROM "serial print drivers"?
+    Rtos SDK does not use them. igrr also didn't use them in ...postmortem.
+    
  */
 
 #include <stdio.h>
