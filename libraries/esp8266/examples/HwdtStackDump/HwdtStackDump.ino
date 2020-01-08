@@ -25,7 +25,8 @@ void setup(void)
   if (stack_usages.sys) {
   Serial.println(String(F("Stack Usages:")));
     Serial.printf_P(PSTR("  ctx: sys  %6u\r\n"), stack_usages.sys);
-    Serial.printf_P(PSTR("  ctx: cont %6u\r\n"), stack_usages.cont);
+    uint32 cont_flags = stack_usages.cont_integrity;
+    Serial.printf_P(PSTR("  ctx: cont %6u, Integrity Flags: %04X - %s\r\n"), stack_usages.cont, cont_flags, (cont_flags) ? "fail" : "pass");
     if (stack_usages.rom) {
       Serial.printf_P(PSTR("  ctx: ROM  %6u\r\n"), stack_usages.rom);
     }

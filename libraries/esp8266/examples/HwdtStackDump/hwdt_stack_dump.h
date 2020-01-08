@@ -6,6 +6,7 @@ typedef struct STACK_USAGES {
     uint32_t sys;
     uint32_t cont;
     uint32_t rtc_sys_reason;
+    uint32_t cont_integrity;
 } STACK_USAGES_t;
 
 extern uint32_t *g_rom_stack;

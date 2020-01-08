@@ -98,6 +98,7 @@ typedef struct STACK_USAGES {
     uint32_t sys;
     uint32_t cont;
     uint32_t rtc_sys_reason;
+    uint32_t cont_integrity;
 } STACK_USAGES_t;
 
 extern uint32_t *g_rom_stack;
@@ -206,14 +207,14 @@ void enable_debug_hwdt_at_link_time (void)
 
 extern "C" {
 //
-static void ICACHE_RAM_ATTR print_size(uintptr_t val) {
-    uint32_t fmt_sz[4];
-    fmt_sz[0]  = ('0' ) | ('x' <<8) | ('%' <<16) | ('0' <<24);
-    fmt_sz[1]  = ('8' ) | ('X' <<8) | (',' <<16) | (' ' <<24);
-    fmt_sz[2]  = (' ' ) | ('%' <<8) | ('5' <<16) | ('u' <<24);
-    fmt_sz[3]  = ('\n') | ('\0'<<8) | ('\0'<<16) | ('\0'<<24);
-    ets_printf((const char *)fmt_sz, val, val);
-}
+// static void ICACHE_RAM_ATTR print_size(uintptr_t val) {
+//     uint32_t fmt_sz[4];
+//     fmt_sz[0]  = ('0' ) | ('x' <<8) | ('%' <<16) | ('0' <<24);
+//     fmt_sz[1]  = ('8' ) | ('X' <<8) | (',' <<16) | (' ' <<24);
+//     fmt_sz[2]  = (' ' ) | ('%' <<8) | ('5' <<16) | ('u' <<24);
+//     fmt_sz[3]  = ('\n') | ('\0'<<8) | ('\0'<<16) | ('\0'<<24);
+//     ets_printf((const char *)fmt_sz, val, val);
+// }
 
 
 enum PRINT_STACK {
@@ -302,22 +303,22 @@ static void ICACHE_RAM_ATTR print_stack(uintptr_t start, uintptr_t end, uint32_t
     }
 }
 
-static bool validate_dram_ptr(const void *p) {
-    if ((uintptr_t)p >= (uintptr_t)dram_start &&
-        (uintptr_t)p <= (uintptr_t)dram_end   &&
-        0 == ((uintptr_t)p & 3) ) {
-        return true;
-    }
-    return false;
-}
+// static bool validate_dram_ptr(const void *p) {
+//     if ((uintptr_t)p >= (uintptr_t)dram_start &&
+//         (uintptr_t)p <= (uintptr_t)dram_end   &&
+//         0 == ((uintptr_t)p & 3) ) {
+//         return true;
+//     }
+//     return false;
+// }
 static const uint32_t * ICACHE_RAM_ATTR skip_stackguard(const uint32_t *start, const uint32_t *end, const uint32_t pattern) {
-    // First validate address
-    if (!validate_dram_ptr(start) ||
-        !validate_dram_ptr(end)   ||
-        (uintptr_t)start >= (uintptr_t)end) {
-
-        return NULL;
-    }
+    // // First validate address
+    // if (!validate_dram_ptr(start) ||
+    //     !validate_dram_ptr(end)   ||
+    //     (uintptr_t)start >= (uintptr_t)end) {
+    //
+    //     return NULL;
+    // }
 
     // Find the end of SYS stack activity
     const uint32_t *uptr = start;
@@ -445,17 +446,31 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
                 // print_size(stack_usages.sys);
             }
         }
+        uint32_t cont_stack_integrity = 0;
+        if (g_pcont->stack_guard1 != CONT_STACKGUARD) {
+            cont_stack_integrity |= 0x0001;
+        }
+        if (g_pcont->stack_guard2 != CONT_STACKGUARD) {
+            cont_stack_integrity |= 0x0010;
+        }
+        if (g_pcont->stack_end != (g_pcont->stack + (sizeof(g_pcont->stack) / 4))) {
+            cont_stack_integrity |= 0x0100;
+            // Fix ending so we don't crash
+            g_pcont->stack_end = (g_pcont->stack + (sizeof(g_pcont->stack) / 4));
+        }
+        if (g_pcont->struct_start != (unsigned*) g_pcont) {
+            cont_stack_integrity |= 0x1000;
+        }
+        stack_usages.cont_integrity = cont_stack_integrity;
 #if defined(DEBUG_HWDT_NO4KEXTRA) || defined(STACK_USAGES)
-        /* Print separate cont stack */
         uptr = skip_stackguard(g_pcont->stack, g_pcont->stack_end, CONT_STACKGUARD);
         if (uptr) {
             stack_usages.cont = (uintptr_t)g_pcont->stack_end - (uintptr_t)uptr;
 #ifdef DEBUG_HWDT_NO4KEXTRA
-            if (stack_usages.cont <= CONT_STACKSIZE) {
-                if (hwdt_reset) {
-                    print_stack((uintptr_t)uptr, (uintptr_t)g_pcont->stack_end, PRINT_STACK::CONT);
-                    // print_size(stack_usages.cont);
-                }
+            if (hwdt_reset) {
+                /* Print separate cont stack */
+                print_stack((uintptr_t)uptr, (uintptr_t)g_pcont->stack_end, PRINT_STACK::CONT);
+                // print_size(stack_usages.cont);
             }
 #endif
         }
