@@ -59,9 +59,12 @@
 #include "coredecls.h"
 #include <core_esp8266_features.h>
 #include <esp8266_undocumented.h>
+#include <esp8266_peri.h>
+#include <uart.h>
 
 extern "C" {
 #include <user_interface.h>
+#include <uart_register.h>
 extern void call_user_start();
 //D extern uint32_t rtc_get_reset_reason(void);
 }
@@ -94,9 +97,10 @@ typedef struct STACK_USAGES {
     uint32_t rom;
     uint32_t sys;
     uint32_t cont;
+    uint32_t rtc_sys_reason;
 } STACK_USAGES_t;
 
-extern uint32_t *g_romStack;
+extern uint32_t *g_rom_stack;
 extern STACK_USAGES_t stack_usages;
 
 #endif
@@ -105,8 +109,9 @@ extern STACK_USAGES_t stack_usages;
 STACK_USAGES_t stack_usages __attribute__((section(".noinit")));
 
 #define MK_ALIGN16_SZ(a) (((a) + 0x0F) & ~0x0F)
-// #define UINTPTR_T uint32_t
-#define UINTPTR_T uintptr_t
+#define ALIGN_UP(a, s) ((decltype(a))((((uintptr_t)(a)) + (s-1)) & ~(s-1)))
+#define ALIGN_DOWN(a, s) ((decltype(a))(((uintptr_t)(a)) & ~(s-1)))
+
 
 /*
  * ROM_STACK_SIZE
@@ -143,14 +148,14 @@ constexpr uint32_t *dram_start      = (uint32_t *)0x3FFE8000;
 constexpr uint32_t *dram_end        = (uint32_t *)0x40000000;
 
 constexpr uint32_t *rom_stack_first = (uint32_t *)0x40000000;
-constexpr uint32_t *sysStack        = (uint32_t *)0x3fffeb30;
-constexpr uint32_t *sysStack_e000   = (uint32_t *)0x3fffe000;
+constexpr uint32_t *sys_stack       = (uint32_t *)0x3fffeb30;
+constexpr uint32_t *sys_stack_e000  = (uint32_t *)0x3fffe000;
 
 
 // Map out who lives where
 constexpr size_t rom_stack_A16_sz = MK_ALIGN16_SZ(ROM_STACK_SIZE);
 constexpr size_t cont_stack_A16_sz = MK_ALIGN16_SZ(sizeof(cont_t));
-constexpr uint32_t *romStack = (uint32_t *)((uintptr_t)rom_stack_first - rom_stack_A16_sz);
+constexpr uint32_t *rom_stack = (uint32_t *)((uintptr_t)rom_stack_first - rom_stack_A16_sz);
 
 
 #ifdef DEBUG_HWDT_NO4KEXTRA
@@ -158,10 +163,10 @@ constexpr uint32_t *romStack = (uint32_t *)((uintptr_t)rom_stack_first - rom_sta
 static cont_t g_cont __attribute__ ((aligned (16)));
 //? constexpr uint32_t *cont_stack_first = (uint32_t *)((uintptr_t));
 //? constexpr cont_t *contStack = (cont_t *)&g_cont;
-constexpr uint32_t *sys_stack_first = (uint32_t *)((uintptr_t)romStack);
+constexpr uint32_t *sys_stack_first = (uint32_t *)((uintptr_t)rom_stack);
 
 #else
-constexpr uint32_t *cont_stack_first = (uint32_t *)((uintptr_t)romStack); // only for computation
+constexpr uint32_t *cont_stack_first = (uint32_t *)((uintptr_t)rom_stack); // only for computation
 constexpr cont_t *contStack = (cont_t *)((uintptr_t)cont_stack_first - cont_stack_A16_sz);
 constexpr uint32_t *sys_stack_first = (uint32_t *)((uintptr_t)contStack);
 #endif
@@ -171,14 +176,14 @@ constexpr volatile uint32_t *RTC_SYS = (volatile uint32_t*)0x60001100;
 /*
  *  ... need to review for what has changed
  *
- *  Another thought save romStack address as the SP to use when starting
+ *  Another thought save rom_stack address as the SP to use when starting
  *  the SDK. Reset the stack pointer back to the beginning, with in the
- *  romStack array. Do all the stack dump work withing the confines of
- *  romStack. Then set SP to romStack and call call_user_start();
+ *  rom_stack array. Do all the stack dump work withing the confines of
+ *  rom_stack. Then set SP to rom_stack and call call_user_start();
  *
  */
 
-uint32_t *g_romStack  __attribute__((section(".noinit")));
+uint32_t *g_rom_stack  __attribute__((section(".noinit")));
 size_t g_rom_stack_A16_sz  __attribute__((section(".noinit")));
 
 
@@ -200,8 +205,8 @@ void enable_debug_hwdt_at_link_time (void)
 /* the following code is linked only if a call to the above function is made somewhere */
 
 extern "C" {
-
-static void ICACHE_RAM_ATTR print_size(UINTPTR_T val) {
+//
+static void ICACHE_RAM_ATTR print_size(uintptr_t val) {
     uint32_t fmt_sz[4];
     fmt_sz[0]  = ('0' ) | ('x' <<8) | ('%' <<16) | ('0' <<24);
     fmt_sz[1]  = ('8' ) | ('X' <<8) | (',' <<16) | (' ' <<24);
@@ -214,16 +219,10 @@ static void ICACHE_RAM_ATTR print_size(UINTPTR_T val) {
 enum PRINT_STACK {
     CONT = 1,
     SYS = 2,
-    BODY = 4,
-    CLOSE = 8,
-    ROM = 16,
-    PART1_CONT = (1 + 4),
-    PART1_SYS = (2 + 4),
-    PART1_ROM = (16 + 4),
-    PART2 = (4 + 8)
-} ;
+    ROM = 4
+};
 
-static void ICACHE_RAM_ATTR print_stack(UINTPTR_T start, UINTPTR_T end, UINTPTR_T adjust, uint32_t chunk) {
+static void ICACHE_RAM_ATTR print_stack(uintptr_t start, uintptr_t end, uint32_t chunk) {
 
     uint32_t fmt_stk[6];
     fmt_stk[0] = ('\n') | ('>' <<8) | ('>' <<16) | ('>' <<24);
@@ -265,7 +264,7 @@ static void ICACHE_RAM_ATTR print_stack(UINTPTR_T start, UINTPTR_T end, UINTPTR_
         ets_printf((const char *)fmt_stk, (const char *)fmt_rom);
     }
 
-    ets_printf((const char *)fmt_sp, start + adjust, end + adjust, 0);
+    ets_printf((const char *)fmt_sp, start, end, 0);
 
     {
         uint32_t fmt_stk_dmp[8];
@@ -284,9 +283,9 @@ static void ICACHE_RAM_ATTR print_stack(UINTPTR_T start, UINTPTR_T end, UINTPTR_
                 uint32_t *value = (uint32_t *)(start + pos);
 
                 // rough indicator: stack frames usually have SP saved as the second word
-                bool looksLikeStackFrame = (value[2] == (start - adjust + pos + 0x10));
+                bool looksLikeStackFrame = (value[2] == (start + pos + 0x10));
 
-                ets_printf((const char*)fmt_stk_dmp, (uint32_t)&value[0] - adjust,
+                ets_printf((const char*)fmt_stk_dmp, (uint32_t)&value[0],
                            value[0], value[1], value[2], value[3],
                            (looksLikeStackFrame)?'<':' ');
             }
@@ -323,7 +322,7 @@ static const uint32_t * ICACHE_RAM_ATTR skip_stackguard(const uint32_t *start, c
     // Find the end of SYS stack activity
     const uint32_t *uptr = start;
 
-    size_t this_mutch = (UINTPTR_T)end - (UINTPTR_T)start;
+    size_t this_mutch = (uintptr_t)end - (uintptr_t)start;
     this_mutch /= sizeof(uint32_t);
     size_t i = 0;
     for (; i < this_mutch; i++) {
@@ -359,7 +358,7 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
      *  use 800 bytes of stack. At this time we start with a 1024 byte gap.
      *
      *  4. Once this function starts the SDK. This buffer may be used for other
-     *  puposes by referencing g_romStack.
+     *  puposes by referencing g_rom_stack.
      *
      *  **** I am concern that the 4KEXTRA option may not have enough room left
      *  for SDK SYS stack. For debugging it may be best to use the NO4KEXTRA
@@ -367,13 +366,10 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
      *
      */
 
-// constexpr size_t rom_stack_A16_sz = rom_stack_A16_sz; //MK_ALIGN16_SZ(STACK_SAVER_GAP_SIZE);
-// constexpr uint32_t *romStack = romStack; //(uint32_t *)(0x40000000U - rom_stack_A16_sz);
-
     // We really need to know if it is 1st boot at power on
     bool power_on = false;
     if (//g_sys_stack_first != sys_stack_first ||
-        g_romStack != romStack ||
+        g_rom_stack != rom_stack ||
         g_rom_stack_A16_sz != rom_stack_A16_sz ||
 #ifdef DEBUG_HWDT_NO4KEXTRA
         g_pcont != &g_cont
@@ -383,13 +379,10 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
    ) {
 
         power_on = true;
-        g_romStack = romStack;
+        g_rom_stack = rom_stack;
         g_rom_stack_A16_sz = rom_stack_A16_sz;
         // g_sys_stack_first = sys_stack_first;
     }
-
-    ets_memset(&stack_usages, 0, sizeof(stack_usages));
-
     /*
      *  Detecting a Hardware WDT (HWDT) reset is made a little complicated at
      *  boot before the SDK is started.
@@ -413,8 +406,10 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
      *
      */
 
+    ets_memset(&stack_usages, 0, sizeof(stack_usages));
+    uint32_t rtc_sys_reason =
+    stack_usages.rtc_sys_reason = RTC_SYS[0];
 
-    uint32_t rtc_sys_reason = RTC_SYS[0];
     bool hwdt_reset = false;
 
     if (!power_on && REASON_WDT_RST == rtc_sys_reason) {
@@ -426,13 +421,13 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
         // // This is pointless this area is zeroed out by the Boot ROM
         // // init code. This part of the sys stack is lost. It is best
         // // to use the NO4KEXTRA option if failure is on the sys stack.
-        // const uint32_t *uptr = skip_stackguard(sysStack_e000, sysStack, 0);
-        // if ((uintptr_t)uptr == (uintptr_t)sysStack) {
-        //     uptr = skip_stackguard(sysStack, romStack, CONT_STACKGUARD);
+        // const uint32_t *uptr = skip_stackguard(sys_stack_e000, sys_stack, 0);
+        // if ((uintptr_t)uptr == (uintptr_t)sys_stack) {
+        //     uptr = skip_stackguard(sys_stack, rom_stack, CONT_STACKGUARD);
         // }
-        const uint32_t *uptr = skip_stackguard(sysStack, romStack, CONT_STACKGUARD);
+        const uint32_t *uptr = skip_stackguard(sys_stack, rom_stack, CONT_STACKGUARD);
         if (uptr) {
-            stack_usages.sys = (UINTPTR_T)romStack - (UINTPTR_T)uptr;
+            stack_usages.sys = (uintptr_t)rom_stack - (uintptr_t)uptr;
 
             /* Print context SYS */
             if (hwdt_reset) {
@@ -446,20 +441,20 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
                   fmt_hwdt[5] = 0;
                   ets_printf((const char*)fmt_hwdt);
                 }
-                print_stack((UINTPTR_T)uptr, (UINTPTR_T)romStack, 0, PART1_SYS | PART2);
-                print_size(stack_usages.sys);
+                print_stack((uintptr_t)uptr, (uintptr_t)rom_stack, PRINT_STACK::SYS);
+                // print_size(stack_usages.sys);
             }
         }
 #if defined(DEBUG_HWDT_NO4KEXTRA) || defined(STACK_USAGES)
         /* Print separate cont stack */
         uptr = skip_stackguard(g_pcont->stack, g_pcont->stack_end, CONT_STACKGUARD);
         if (uptr) {
-            stack_usages.cont = (UINTPTR_T)g_pcont->stack_end - (UINTPTR_T)uptr;
+            stack_usages.cont = (uintptr_t)g_pcont->stack_end - (uintptr_t)uptr;
 #ifdef DEBUG_HWDT_NO4KEXTRA
             if (stack_usages.cont <= CONT_STACKSIZE) {
                 if (hwdt_reset) {
-                    print_stack((UINTPTR_T)uptr, (UINTPTR_T)g_pcont->stack_end, 0, PART1_CONT | PART2);
-                    print_size(stack_usages.cont);
+                    print_stack((uintptr_t)uptr, (uintptr_t)g_pcont->stack_end, PRINT_STACK::CONT);
+                    // print_size(stack_usages.cont);
                 }
             }
 #endif
@@ -472,25 +467,25 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
      *  skip the unused section of the stack when printing a Stack Dump.
      */
     {
-        size_t this_mutch = (UINTPTR_T)romStack - (UINTPTR_T)sysStack;
+        size_t this_mutch = (uintptr_t)rom_stack - (uintptr_t)sys_stack;
         this_mutch /= sizeof(uint32_t);
         for (size_t i = 0; i < this_mutch; i++) {
-            sysStack[i] = CONT_STACKGUARD;
+            sys_stack[i] = CONT_STACKGUARD;
         }
     }
 
 #if defined(STACK_USAGES) || defined(ROM_STACK_DUMP)
     /*
-     *  Reports on romStack usage by ROM and eboot.
+     *  Reports on rom_stack usage by ROM and eboot.
      *  Used to confirm ROM_STACK_SIZE is large enough.
      */
     {
-        const uint32_t *uptr = skip_stackguard(romStack, rom_stack_first, CONT_STACKGUARD);
+        const uint32_t *uptr = skip_stackguard(rom_stack, rom_stack_first, CONT_STACKGUARD);
         if (uptr) {
-            stack_usages.rom = (UINTPTR_T)rom_stack_first - (UINTPTR_T)uptr;
+            stack_usages.rom = (uintptr_t)rom_stack_first - (uintptr_t)uptr;
 #if defined(ROM_STACK_DUMP)
-            print_stack((UINTPTR_T)uptr, (UINTPTR_T)rom_stack_first, 0, PART1_ROM | PART2);
-            print_size(stack_usages.rom);
+            print_stack((uintptr_t)uptr, (uintptr_t)rom_stack_first, PRINT_STACK::ROM);
+            // print_size(stack_usages.rom);
 #endif
         }
     }
@@ -533,9 +528,9 @@ void ICACHE_RAM_ATTR app_entry_redefinable(void) {
 
 #if defined(STACK_USAGES)
 void initVariant(void) {
-    // Fill the romStack while it is not actively being used.
+    // Fill the rom_stack while it is not actively being used.
     for (size_t i = 0; i < g_rom_stack_A16_sz/sizeof(uint32_t); i++) {
-        g_romStack[i] = CONT_STACKGUARD;
+        g_rom_stack[i] = CONT_STACKGUARD;
     }
 }
 #endif
