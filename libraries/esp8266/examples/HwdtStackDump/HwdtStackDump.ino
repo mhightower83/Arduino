@@ -10,25 +10,25 @@ void enable_debug_hwdt_at_link_time(void);
 
 #include "hwdt_stack_dump.h"
 
-constexpr volatile uint32_t * RTC_SYS = (volatile uint32_t*)0x60001100;
 extern struct rst_info resetInfo;
 
 void setup(void)
 {
   enable_debug_hwdt_at_link_time();
+  WiFi.persistent(false); // w/o this a flash write occurs at every boot
   WiFi.mode(WIFI_OFF);
   Serial.begin(115200);
   delay(20);
   Serial.println();
   Serial.println();
-  Serial.println(String(F("RTC_SYS[0] = ")) +  (stack_usages.rtc_sys_reason) + F(", resetInfo.reason = ") + (resetInfo.reason) + F(", ") + ESP.getResetReason());
-  if (stack_usages.sys) {
+  Serial.println(String(F("RTC_SYS[0] = ")) +  (hwdt_info.rtc_sys_reason) + F(", resetInfo.reason = ") + (resetInfo.reason) + F(", ") + ESP.getResetReason());
+  if (hwdt_info.sys) {
   Serial.println(String(F("Stack Usages:")));
-    Serial.printf_P(PSTR("  ctx: sys  %6u\r\n"), stack_usages.sys);
-    uint32 cont_flags = stack_usages.cont_integrity;
-    Serial.printf_P(PSTR("  ctx: cont %6u, Integrity Flags: %04X - %s\r\n"), stack_usages.cont, cont_flags, (cont_flags) ? "fail" : "pass");
-    if (stack_usages.rom) {
-      Serial.printf_P(PSTR("  ctx: ROM  %6u\r\n"), stack_usages.rom);
+    Serial.printf_P(PSTR("  ctx: sys  %6u\r\n"), hwdt_info.sys);
+    uint32 cont_flags = hwdt_info.cont_integrity;
+    Serial.printf_P(PSTR("  ctx: cont %6u, Integrity Flags: %04X - %s\r\n"), hwdt_info.cont, cont_flags, (cont_flags) ? "fail" : "pass");
+    if (hwdt_info.rom) {
+      Serial.printf_P(PSTR("  ctx: ROM  %6u\r\n"), hwdt_info.rom);
     }
   }
   Serial.println();

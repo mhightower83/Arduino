@@ -15,43 +15,29 @@
  */
 
 /*
- *  Need a description of what we are doing what this is for.
- */
-
- /*
- * * We as using this to get started.
+ * As far as I know there is no way to get called for a Hardware WDT. I assume
+ * it generates a form of reset that occurs at a low level that cannot be
+ * trapped. Debugging a HWDT can be quite challenging.
  *
- *  This is the original app_entry() not providing extra 4K heap, but allowing
- *  the use of WPS.
+ * This module writes a stack dump after a Hardware Watchdog Timer has struck
+ * and a new boot cycle has begun. Since we have a late start, some information
+ * may be lost due to DRAM usage by the Boot ROM and the bootloader.
  *
- *  see comments in core_esp8266_main.cpp's app_entry()
+ * We are using the method defined for `core_esp8266_app_entry_noextra4k.cpp` to
+ * load an alternate `app_entry_redefinable()`. For details on this method, see
+ * comments in `core_esp8266_main.cpp's app_entry()`.
+ *
+ * Using this alternate we are able to gain control before the SDK is started.
+ * And dump what is left of the "sys" and "cont" stacks.
+ *
+ *
+ *
  *
  */
 
 /*
- * To improve clarity of meaning on variable names I try to use "_last" on
+ * To improve clarity of meaning on stack variable names I try to use "_last" on
  * names refereing to the beginning of a stack.
- */
-
-/* -- delete this bloated description
- *
- * start, end, top, bottom, first, last, up, down as references to larger or
- * smaller memory address values all become ambigious to me when you start using
- * them to describe stacks that start at a higher address and move down. Then
- * you start getting references to buffers and they are going in the oposite
- * direction.
- *
- * It is my intent to only use start and end to augment variables that are
- * describing normal memory directions.
- *
- * I intend to use "_first" and "_last" to augment varaibles that describe a stack
- * pointer, where first will be the highest address value and last will be the
- * lowest.
- *
- * Since I came to this after writing a lot of this code I will need to
- * update names for compliance. So beware, I also have a strong tendency to
- * get things like this confused anyway.
- *
  */
 
 #include <c_types.h>
@@ -66,48 +52,45 @@ extern "C" {
 #include <user_interface.h>
 #include <uart_register.h>
 extern void call_user_start();
-//D extern uint32_t rtc_get_reset_reason(void);
 }
 
 /*
  * DEBUG_HWDT_NO4KEXTRA
  *
- * This option will leave more of the system stack available for stack dump. The
- * problem with the "4K extra" option is that it pushes the system stack up into
- * the ROM's BSS area which gets zeroed at the ROM reboot event created by the
- * Hardware WDT.
+ * This option will leave more of the system stack available for the stack dump.
+ * The problem with the "4K extra" option is that it pushes the system stack up
+ * into the ROM's BSS area which gets zeroed at reboot by the Boot ROM.
  *
  * Using this option has the effect of taking 4K of DRAM away from the heap
- * which gets used for "cont" stack. Leaving an extra 4K on the sys stack that
- * is clear of the ROM BSS, allowing a more complete sys stack dump.
+ * which gets used for the "cont" stack. Leaving an extra 4K on the "sys" stack
+ * that is clear of the ROM's BSS area, allowing a more complete "sys" stack dump.
  *
  */
 #define DEBUG_HWDT_NO4KEXTRA
 
+
+#include "hwdt_stack_dump.h"
 /*
- *  Added this block to make this module complete.
- *  Stuff for a #include "hwdt_stack_dump.h"
- *
- #include "hwdt_stack_dump.h"
+ * This is the contents for the include file should it be missing or misplaced.
  */
 #ifndef HWDT_STACK_DUMP_H
 #define HWDT_STACK_DUMP_H
 
-typedef struct STACK_USAGES {
+typedef struct HWDT_INFO {
     uint32_t rom;
     uint32_t sys;
     uint32_t cont;
     uint32_t rtc_sys_reason;
     uint32_t cont_integrity;
-} STACK_USAGES_t;
+} HWDT_INFO_t;
 
 extern uint32_t *g_rom_stack;
-extern STACK_USAGES_t stack_usages;
+extern HWDT_INFO_t hwdt_info;
 
 #endif
 // end - #include "hwdt_stack_dump.h"
 
-STACK_USAGES_t stack_usages __attribute__((section(".noinit")));
+HWDT_INFO_t hwdt_info __attribute__((section(".noinit")));
 
 #define MK_ALIGN16_SZ(a) (((a) + 0x0F) & ~0x0F)
 #define ALIGN_UP(a, s) ((decltype(a))((((uintptr_t)(a)) + (s-1)) & ~(s-1)))
@@ -117,10 +100,11 @@ STACK_USAGES_t stack_usages __attribute__((section(".noinit")));
 /*
  * ROM_STACK_SIZE
  *
- * This is the gap we maintain between the stack used by the ROM and eboot code
- * and the sketch. (by which I refer to ESP8266 Core, NONOS SDK, and sketch as
- * one.) This gap helps preserve the contents of the SDK stack we want to
- * display.
+ * This defines a stack for used by the ROM and bootloader that is separate from
+ * that used by the sketch. By sketch, I refer to ESP8266 Core, NONOS SDK, and
+ * sketch as one. By not letting the stack spaces the two uses overlap
+ * we lose some stack space by leaving idle space behind; however, we improve
+ * the likelyhood that we can generate a stack dump after a HWDT crash.
  *
  */
 #ifndef ROM_STACK_SIZE
@@ -128,32 +112,43 @@ STACK_USAGES_t stack_usages __attribute__((section(".noinit")));
 #endif
 
 /*
- * STACK_USAGES
+ * HWDT_INFO
  *
- * Gather stack usage information on ROM and eboot combined, sys, and cont.
+ * Gather some useful information on ROM and bootloader combined, sys, and cont
+ * stack usage as well as other stuff that comes up.
+ *
  */
-#define STACK_USAGES
+#define HWDT_INFO
 
 /*
  * ROM_STACK_DUMP
  *
- * Dump the stack contents of the ROM Stack area.
+ * Dump the stack contents of the ROM Stack area. Good for getting a visual
+ * on stack usage. Probably not much value beyond developing this tool.
+ *
+ #define ROM_STACK_DUMP
  */
-// #define ROM_STACK_DUMP
 
 #ifndef CONT_STACKGUARD
 #define CONT_STACKGUARD 0xfeefeffe
 #endif
+
 
 constexpr uint32_t *dram_start      = (uint32_t *)0x3FFE8000;
 constexpr uint32_t *dram_end        = (uint32_t *)0x40000000;
 
 constexpr uint32_t *rom_stack_first = (uint32_t *)0x40000000;
 constexpr uint32_t *sys_stack       = (uint32_t *)0x3fffeb30;
+/*
+ * This appears to be a ROM BSS area that is later claimed by the SDK for the
+ * stack space. This is a problem area for us, because being the ROM BSS it gets
+ * zeroed as part of ROM init on reboot. Any part of the "sys"" stack here is
+ * lost. Thus at a new ROM boot the space between 0x3fffe000 up to 0x3fffeb30 is
+ * zeroed out.
+ */
 constexpr uint32_t *sys_stack_e000  = (uint32_t *)0x3fffe000;
 
-
-// Map out who lives where
+// Map out who will live where.
 constexpr size_t rom_stack_A16_sz = MK_ALIGN16_SZ(ROM_STACK_SIZE);
 constexpr size_t cont_stack_A16_sz = MK_ALIGN16_SZ(sizeof(cont_t));
 constexpr uint32_t *rom_stack = (uint32_t *)((uintptr_t)rom_stack_first - rom_stack_A16_sz);
@@ -162,27 +157,17 @@ constexpr uint32_t *rom_stack = (uint32_t *)((uintptr_t)rom_stack_first - rom_st
 #ifdef DEBUG_HWDT_NO4KEXTRA
 /* this is the default NONOS-SDK user's heap location */
 static cont_t g_cont __attribute__ ((aligned (16)));
-//? constexpr uint32_t *cont_stack_first = (uint32_t *)((uintptr_t));
-//? constexpr cont_t *contStack = (cont_t *)&g_cont;
 constexpr uint32_t *sys_stack_first = (uint32_t *)((uintptr_t)rom_stack);
 
 #else
 constexpr uint32_t *cont_stack_first = (uint32_t *)((uintptr_t)rom_stack); // only for computation
-constexpr cont_t *contStack = (cont_t *)((uintptr_t)cont_stack_first - cont_stack_A16_sz);
-constexpr uint32_t *sys_stack_first = (uint32_t *)((uintptr_t)contStack);
+constexpr cont_t *cont_stack = (cont_t *)((uintptr_t)cont_stack_first - cont_stack_A16_sz);
+constexpr uint32_t *sys_stack_first = (uint32_t *)((uintptr_t)cont_stack);
 #endif
 
 
 constexpr volatile uint32_t *RTC_SYS = (volatile uint32_t*)0x60001100;
-/*
- *  ... need to review for what has changed
- *
- *  Another thought save rom_stack address as the SP to use when starting
- *  the SDK. Reset the stack pointer back to the beginning, with in the
- *  rom_stack array. Do all the stack dump work withing the confines of
- *  rom_stack. Then set SP to rom_stack and call call_user_start();
- *
- */
+
 
 uint32_t *g_rom_stack  __attribute__((section(".noinit")));
 size_t g_rom_stack_A16_sz  __attribute__((section(".noinit")));
@@ -191,13 +176,14 @@ size_t g_rom_stack_A16_sz  __attribute__((section(".noinit")));
 void enable_debug_hwdt_at_link_time (void)
 {
     /*
-     * This functions does nothing; however, including a call to it in setup,
-     * allows this module to override, at link time, the core_esp8266_main.cpp's
-     * app_entry() with the one below. This will create a stack dump on
-     * Hardware WDT resets.
+     * This functions does nothing; however, including a call to it in
+     * setup, allows this module to override, at link time, the
+     * core_esp8266_main.cpp's app_entry() with the one below. This will
+     * create a stack dump on Hardware WDT resets.
      *
      * It appears just including this module in the sketch dirctory will
-     * will also accomplish the same.
+     * will also accomplish the same. Or maybe it is the referencing of a
+     * global that is in here.
      *
      */
 }
@@ -342,93 +328,58 @@ static const uint32_t * ICACHE_RAM_ATTR skip_stackguard(const uint32_t *start, c
 
 static void ICACHE_RAM_ATTR handle_hwdt(void) {
     /*
-     *  This array is multipurpose:
-     *
-     *  We create the array through inline assembly by adjusting the stack
-     *  pointer just before calling the NONOS SDK. We define the pointers in
-     *  advance so we can reference them for generating the stack trace.  The
-     *  gap must be great enough that our stack usage now does not run into that
-     *  of the SDK.
-     *
-     *  2. Creates a gap between the beginning of the stack space used by the
-     *  Boot ROM and eboot from that used by NONOS SDK Core. By createing an
-     *  array on the stack before starting the SDK we put a gap between our
-     *  interesting stack activity and that produced by the Boot ROM and eboot.
-     *
-     *  3. The combined calls made from here and Boot ROM and eboot currently
-     *  use 800 bytes of stack. At this time we start with a 1024 byte gap.
-     *
-     *  4. Once this function starts the SDK. This buffer may be used for other
-     *  puposes by referencing g_rom_stack.
-     *
-     *  **** I am concern that the 4KEXTRA option may not have enough room left
-     *  for SDK SYS stack. For debugging it may be best to use the NO4KEXTRA
-     *  option.
-     *
-     */
-
-    // We really need to know if it is 1st boot at power on
+    *  Detecting a Hardware WDT (HWDT) reset is made a little complicated at
+    *  boot before the SDK is started.
+    *
+    *  While the ROM API will report a HWDT it does not change the status after
+    *  a software restart. And the SDK has not been started so its API is not
+    *  available.
+    *
+    *  A value in System RTC memory appears store the reset reason for the SDK.
+    *  It appears to be set before the SDK performs its restart. Of course this
+    *  value is invalid at power on before the SDK runs.
+    *
+    *  Case 1: At power on boot the ROM API result is valid; however, the SDK
+    *  value in RTC Memory has not been set at this time.
+    *
+    *  Case 2: A HWDT reset has occured, which is later followed with a
+    *  restart by the SDK. At boot the ROM API result still reports the HWDT
+    *  reason.
+    *
+    *
+    *
+    *  I really need to know if this is the 1st boot at power on. Combining the
+    *  indicators above proved to be very convoluted and unreliable for power on
+    *  detection.
+    *
+    *  Testing vital pointers for validity has been working well so far.
+    */
     bool power_on = false;
-    if (//g_sys_stack_first != sys_stack_first ||
-        g_rom_stack != rom_stack ||
+    if (g_rom_stack != rom_stack ||
         g_rom_stack_A16_sz != rom_stack_A16_sz ||
 #ifdef DEBUG_HWDT_NO4KEXTRA
         g_pcont != &g_cont
 #else
-        g_pcont != contStack
+        g_pcont != cont_stack
 #endif
-   ) {
-
+        ) {
         power_on = true;
         g_rom_stack = rom_stack;
         g_rom_stack_A16_sz = rom_stack_A16_sz;
-        // g_sys_stack_first = sys_stack_first;
     }
-    /*
-     *  Detecting a Hardware WDT (HWDT) reset is made a little complicated at
-     *  boot before the SDK is started.
-     *
-     *  While the ROM API will report a HWDT it does not change the status after
-     *  a software restart. And the SDK has not been started so its API is not
-     *  available.
-     *
-     *  A value in System RTC memory appears store the reset reason for the SDK.
-     *  It appears to be set before the SDK performs its restart. Of course this
-     *  value is invalid at power on before the SDK runs.
-     *
-     *  Case 1: At power on boot the ROM API result is valid; however, the SDK
-     *  value in RTC Memory has not been set at this time.
-     *
-     *  Case 2: A HWDT reset has occured, which is later followed with a
-     *  restart by the SDK. At boot the ROM API result still reports the HWDT
-     *  reason.
-     *
-     *  So both results are combined to determine when to generate a stack dump.
-     *
-     */
 
-    ets_memset(&stack_usages, 0, sizeof(stack_usages));
-    uint32_t rtc_sys_reason =
-    stack_usages.rtc_sys_reason = RTC_SYS[0];
-
+    ets_memset(&hwdt_info, 0, sizeof(hwdt_info));
+    uint32_t rtc_sys_reason = hwdt_info.rtc_sys_reason = RTC_SYS[0];
     bool hwdt_reset = false;
 
     if (!power_on && REASON_WDT_RST == rtc_sys_reason) {
         hwdt_reset = true;
     }
 
-
     if (!power_on) {
-        // // This is pointless this area is zeroed out by the Boot ROM
-        // // init code. This part of the sys stack is lost. It is best
-        // // to use the NO4KEXTRA option if failure is on the sys stack.
-        // const uint32_t *uptr = skip_stackguard(sys_stack_e000, sys_stack, 0);
-        // if ((uintptr_t)uptr == (uintptr_t)sys_stack) {
-        //     uptr = skip_stackguard(sys_stack, rom_stack, CONT_STACKGUARD);
-        // }
         const uint32_t *uptr = skip_stackguard(sys_stack, rom_stack, CONT_STACKGUARD);
         if (uptr) {
-            stack_usages.sys = (uintptr_t)rom_stack - (uintptr_t)uptr;
+            hwdt_info.sys = (uintptr_t)rom_stack - (uintptr_t)uptr;
 
             /* Print context SYS */
             if (hwdt_reset) {
@@ -443,34 +394,32 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
                   ets_printf((const char*)fmt_hwdt);
                 }
                 print_stack((uintptr_t)uptr, (uintptr_t)rom_stack, PRINT_STACK::SYS);
-                // print_size(stack_usages.sys);
             }
         }
-        uint32_t cont_stack_integrity = 0;
+        uint32_t cont_integrity = 0;
         if (g_pcont->stack_guard1 != CONT_STACKGUARD) {
-            cont_stack_integrity |= 0x0001;
+            cont_integrity |= 0x0001;
         }
         if (g_pcont->stack_guard2 != CONT_STACKGUARD) {
-            cont_stack_integrity |= 0x0010;
+            cont_integrity |= 0x0020;
         }
         if (g_pcont->stack_end != (g_pcont->stack + (sizeof(g_pcont->stack) / 4))) {
-            cont_stack_integrity |= 0x0100;
+            cont_integrity |= 0x0300;
             // Fix ending so we don't crash
             g_pcont->stack_end = (g_pcont->stack + (sizeof(g_pcont->stack) / 4));
         }
         if (g_pcont->struct_start != (unsigned*) g_pcont) {
-            cont_stack_integrity |= 0x1000;
+            cont_integrity |= 0x4000;
         }
-        stack_usages.cont_integrity = cont_stack_integrity;
-#if defined(DEBUG_HWDT_NO4KEXTRA) || defined(STACK_USAGES)
+        hwdt_info.cont_integrity = cont_integrity;
+#if defined(DEBUG_HWDT_NO4KEXTRA) || defined(HWDT_INFO)
         uptr = skip_stackguard(g_pcont->stack, g_pcont->stack_end, CONT_STACKGUARD);
         if (uptr) {
-            stack_usages.cont = (uintptr_t)g_pcont->stack_end - (uintptr_t)uptr;
+            hwdt_info.cont = (uintptr_t)g_pcont->stack_end - (uintptr_t)uptr;
 #ifdef DEBUG_HWDT_NO4KEXTRA
             if (hwdt_reset) {
                 /* Print separate cont stack */
                 print_stack((uintptr_t)uptr, (uintptr_t)g_pcont->stack_end, PRINT_STACK::CONT);
-                // print_size(stack_usages.cont);
             }
 #endif
         }
@@ -489,7 +438,7 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
         }
     }
 
-#if defined(STACK_USAGES) || defined(ROM_STACK_DUMP)
+#if defined(HWDT_INFO) || defined(ROM_STACK_DUMP)
     /*
      *  Reports on rom_stack usage by ROM and eboot.
      *  Used to confirm ROM_STACK_SIZE is large enough.
@@ -497,10 +446,9 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
     {
         const uint32_t *uptr = skip_stackguard(rom_stack, rom_stack_first, CONT_STACKGUARD);
         if (uptr) {
-            stack_usages.rom = (uintptr_t)rom_stack_first - (uintptr_t)uptr;
+            hwdt_info.rom = (uintptr_t)rom_stack_first - (uintptr_t)uptr;
 #if defined(ROM_STACK_DUMP)
             print_stack((uintptr_t)uptr, (uintptr_t)rom_stack_first, PRINT_STACK::ROM);
-            // print_size(stack_usages.rom);
 #endif
         }
     }
@@ -518,18 +466,18 @@ void ICACHE_RAM_ATTR app_entry_start(void) {
     /*
      *  The continuation context is on the stack just after the reserved space
      *  for the ROM/eboot stack and before the SYS stack begins.
-     *  All computations done at top, save pointer to it.
+     *  All computations done at top, save pointer to it now.
      */
-    g_pcont = contStack;
+    g_pcont = cont_stack;
 #endif
     /*
      *  Use new calculated SYS stack from top.
      *  Call the entry point of the SDK code.
      */
     asm volatile("" ::: "memory");
-    asm volatile ("mov.n a1, %0\n"
-                  "mov.n a3, %1\n"
-                  "jx a3\n" : : "r" (sys_stack_first), "r" (call_user_start) );
+    asm volatile("mov.n a1, %0\n"
+                 "mov.n a3, %1\n"
+                 "jx a3\n" : : "r" (sys_stack_first), "r" (call_user_start) );
 
     __builtin_unreachable();
 }
@@ -541,9 +489,14 @@ void ICACHE_RAM_ATTR app_entry_redefinable(void) {
 }
 
 
-#if defined(STACK_USAGES)
+#if defined(HWDT_INFO)
 void initVariant(void) {
-    // Fill the rom_stack while it is not actively being used.
+    /*
+     * Fill the rom_stack while it is not actively being used.
+     *
+     * I am thinking that during the time the sketch is running this block of
+     * memory could be used for a scratch buffer.
+     */
     for (size_t i = 0; i < g_rom_stack_A16_sz/sizeof(uint32_t); i++) {
         g_rom_stack[i] = CONT_STACKGUARD;
     }
