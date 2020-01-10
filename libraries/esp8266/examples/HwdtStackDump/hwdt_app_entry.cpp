@@ -1,5 +1,5 @@
 /*
- *   Copyright 2020 M Hightower
+ *   Copyright 2020 Michael Hightower
  *
  *   Licensed under the Apache License, Version 2.0 (the "License");
  *   you may not use this file except in compliance with the License.
@@ -120,6 +120,16 @@ HWDT_INFO_t hwdt_info __attribute__((section(".noinit")));
  */
 #define HWDT_INFO
 
+
+/*
+ * HWDT_SAFE_DRAM
+ *
+ * Can be used to reduce iRAM foot print. It assumes the strings in memory
+ * before the crash are still valid and can be used for printing.
+ */
+#define HWDT_SAFE_DRAM
+
+
 /*
  * ROM_STACK_DUMP
  *
@@ -192,15 +202,16 @@ void enable_debug_hwdt_at_link_time (void)
 /* the following code is linked only if a call to the above function is made somewhere */
 
 extern "C" {
-//
-// static void ICACHE_RAM_ATTR print_size(uintptr_t val) {
-//     uint32_t fmt_sz[4];
-//     fmt_sz[0]  = ('0' ) | ('x' <<8) | ('%' <<16) | ('0' <<24);
-//     fmt_sz[1]  = ('8' ) | ('X' <<8) | (',' <<16) | (' ' <<24);
-//     fmt_sz[2]  = (' ' ) | ('%' <<8) | ('5' <<16) | ('u' <<24);
-//     fmt_sz[3]  = ('\n') | ('\0'<<8) | ('\0'<<16) | ('\0'<<24);
-//     ets_printf((const char *)fmt_sz, val, val);
-// }
+#if 0 // Handy debug print
+static void ICACHE_RAM_ATTR print_size(uintptr_t val) {
+    uint32_t fmt_sz[4];
+    fmt_sz[0]  = ('0' ) | ('x' <<8) | ('%' <<16) | ('0' <<24);
+    fmt_sz[1]  = ('8' ) | ('X' <<8) | (',' <<16) | (' ' <<24);
+    fmt_sz[2]  = (' ' ) | ('%' <<8) | ('5' <<16) | ('u' <<24);
+    fmt_sz[3]  = ('\n') | ('\0'<<8) | ('\0'<<16) | ('\0'<<24);
+    ets_printf((const char *)fmt_sz, val, val);
+}
+#endif
 
 
 enum PRINT_STACK {
@@ -211,6 +222,14 @@ enum PRINT_STACK {
 
 static void ICACHE_RAM_ATTR print_stack(uintptr_t start, uintptr_t end, uint32_t chunk) {
 
+#if defined(HWDT_SAFE_DRAM)
+    const char fmt_stk[]  = "\n>>>stack>>>\n\nctx: %s\n";
+    const char fmt_sp[]   = "sp: %08x end: %08x offset: %04x\n";
+    const char fmt_rom[]  = "ROM";
+    const char fmt_sys[]  = "sys";
+    const char fmt_cont[] = "cont";
+
+#else
     uint32_t fmt_stk[6];
     fmt_stk[0] = ('\n') | ('>' <<8) | ('>' <<16) | ('>' <<24);
     fmt_stk[1] = ('s' ) | ('t' <<8) | ('a' <<16) | ('c' <<24);
@@ -239,7 +258,7 @@ static void ICACHE_RAM_ATTR print_stack(uintptr_t start, uintptr_t end, uint32_t
     uint32_t fmt_cont[2];
     fmt_cont[0] = ('c' ) | ('o' <<8) | ('n' <<16) | ('t' <<24);
     fmt_cont[1] = ('\0') | ('\0'<<8) | ('\0'<<16) | ('\0'<<24);
-
+#endif
 
     if (chunk & PRINT_STACK::CONT) {
         ets_printf((const char *)fmt_stk, (const char *)fmt_cont);
@@ -254,6 +273,9 @@ static void ICACHE_RAM_ATTR print_stack(uintptr_t start, uintptr_t end, uint32_t
     ets_printf((const char *)fmt_sp, start, end, 0);
 
     {
+#if defined(HWDT_SAFE_DRAM)
+        const char fmt_stk_dmp[] = "%08x:  %08x %08x %08x %08x %c\n";
+#else
         uint32_t fmt_stk_dmp[8];
         fmt_stk_dmp[0] = ('%') | ('0' <<8) | ('8' <<16) | ('x' <<24);
         fmt_stk_dmp[1] = (':') | (' ' <<8) | (' ' <<16) | ('%' <<24);
@@ -263,7 +285,7 @@ static void ICACHE_RAM_ATTR print_stack(uintptr_t start, uintptr_t end, uint32_t
         fmt_stk_dmp[5] = ('x') | (' ' <<8) | ('%' <<16) | ('0' <<24);
         fmt_stk_dmp[6] = ('8') | ('x' <<8) | (' ' <<16) | ('%' <<24);
         fmt_stk_dmp[7] = ('c') | ('\n'<<8) | ('\0'<<16) | ('\0'<<24);
-
+#endif
         size_t this_mutch = end - start;
         if (this_mutch >= 0x10) {
             for (size_t pos = 0; pos < this_mutch; pos += 0x10) {
@@ -280,32 +302,20 @@ static void ICACHE_RAM_ATTR print_stack(uintptr_t start, uintptr_t end, uint32_t
     }
 
     {
+#if defined(HWDT_SAFE_DRAM)
+        const char fmt_stk_end[] = "<<<stack<<<\n";
+#else
         uint32_t fmt_stk_end[4];
         fmt_stk_end[0] = ('<' ) | ('<' <<8) | ('<' <<16) | ('s' <<24);
         fmt_stk_end[1] = ('t' ) | ('a' <<8) | ('c' <<16) | ('k' <<24);
         fmt_stk_end[2] = ('<' ) | ('<' <<8) | ('<' <<16) | ('\n'<<24);
         fmt_stk_end[3] = ('\n') | ('\0'<<8) | ('\0'<<16) | ('\0'<<24);
+#endif
         ets_printf((const char *)fmt_stk_end);
     }
 }
 
-// static bool validate_dram_ptr(const void *p) {
-//     if ((uintptr_t)p >= (uintptr_t)dram_start &&
-//         (uintptr_t)p <= (uintptr_t)dram_end   &&
-//         0 == ((uintptr_t)p & 3) ) {
-//         return true;
-//     }
-//     return false;
-// }
 static const uint32_t * ICACHE_RAM_ATTR skip_stackguard(const uint32_t *start, const uint32_t *end, const uint32_t pattern) {
-    // // First validate address
-    // if (!validate_dram_ptr(start) ||
-    //     !validate_dram_ptr(end)   ||
-    //     (uintptr_t)start >= (uintptr_t)end) {
-    //
-    //     return NULL;
-    // }
-
     // Find the end of SYS stack activity
     const uint32_t *uptr = start;
 
@@ -377,53 +387,54 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
     }
 
     if (!power_on) {
-        const uint32_t *uptr = skip_stackguard(sys_stack, rom_stack, CONT_STACKGUARD);
-        if (uptr) {
-            hwdt_info.sys = (uintptr_t)rom_stack - (uintptr_t)uptr;
-
-            /* Print context SYS */
-            if (hwdt_reset) {
-                {
-                  uint32_t fmt_hwdt[6];
-                  fmt_hwdt[0] = ('\n') | ('H' <<8) | ('a' <<16) | ('r' <<24);
-                  fmt_hwdt[1] = ('d' ) | ('w' <<8) | ('a' <<16) | ('r' <<24);
-                  fmt_hwdt[2] = ('e' ) | (' ' <<8) | ('W' <<16) | ('D' <<24);
-                  fmt_hwdt[3] = ('T' ) | (' ' <<8) | ('r' <<16) | ('e' <<24);
-                  fmt_hwdt[4] = ('s' ) | ('e' <<8) | ('t' <<16) | ('\n'<<24);
-                  fmt_hwdt[5] = 0;
-                  ets_printf((const char*)fmt_hwdt);
-                }
-                print_stack((uintptr_t)uptr, (uintptr_t)rom_stack, PRINT_STACK::SYS);
-            }
-        }
         uint32_t cont_integrity = 0;
         if (g_pcont->stack_guard1 != CONT_STACKGUARD) {
-            cont_integrity |= 0x0001;
+          cont_integrity |= 0x0001;
         }
         if (g_pcont->stack_guard2 != CONT_STACKGUARD) {
-            cont_integrity |= 0x0020;
+          cont_integrity |= 0x0020;
         }
         if (g_pcont->stack_end != (g_pcont->stack + (sizeof(g_pcont->stack) / 4))) {
-            cont_integrity |= 0x0300;
-            // Fix ending so we don't crash
-            g_pcont->stack_end = (g_pcont->stack + (sizeof(g_pcont->stack) / 4));
+          cont_integrity |= 0x0300;
+          // Fix ending so we don't crash
+          g_pcont->stack_end = (g_pcont->stack + (sizeof(g_pcont->stack) / 4));
         }
         if (g_pcont->struct_start != (unsigned*) g_pcont) {
-            cont_integrity |= 0x4000;
+          cont_integrity |= 0x4000;
         }
         hwdt_info.cont_integrity = cont_integrity;
+
 #if defined(DEBUG_HWDT_NO4KEXTRA) || defined(HWDT_INFO)
-        uptr = skip_stackguard(g_pcont->stack, g_pcont->stack_end, CONT_STACKGUARD);
-        if (uptr) {
-            hwdt_info.cont = (uintptr_t)g_pcont->stack_end - (uintptr_t)uptr;
-#ifdef DEBUG_HWDT_NO4KEXTRA
-            if (hwdt_reset) {
-                /* Print separate cont stack */
-                print_stack((uintptr_t)uptr, (uintptr_t)g_pcont->stack_end, PRINT_STACK::CONT);
+        const uint32_t *ctx_cont_ptr = skip_stackguard(g_pcont->stack, g_pcont->stack_end, CONT_STACKGUARD);
+        hwdt_info.cont = (uintptr_t)g_pcont->stack_end - (uintptr_t)ctx_cont_ptr;
+#endif
+
+        const uint32_t *ctx_sys_ptr = skip_stackguard(sys_stack, rom_stack, CONT_STACKGUARD);
+        hwdt_info.sys = (uintptr_t)rom_stack - (uintptr_t)ctx_sys_ptr;
+
+        /* Print context SYS */
+        if (hwdt_reset) {
+            {
+#if defined(HWDT_SAFE_DRAM)
+              const char fmt_hwdt[] = "\nHardware WDT reset\n";
+#else
+              uint32_t fmt_hwdt[6];
+              fmt_hwdt[0] = ('\n') | ('H' <<8) | ('a' <<16) | ('r' <<24);
+              fmt_hwdt[1] = ('d' ) | ('w' <<8) | ('a' <<16) | ('r' <<24);
+              fmt_hwdt[2] = ('e' ) | (' ' <<8) | ('W' <<16) | ('D' <<24);
+              fmt_hwdt[3] = ('T' ) | (' ' <<8) | ('r' <<16) | ('e' <<24);
+              fmt_hwdt[4] = ('s' ) | ('e' <<8) | ('t' <<16) | ('\n'<<24);
+              fmt_hwdt[5] = 0;
+#endif
+              ets_printf((const char*)fmt_hwdt);
             }
+            print_stack((uintptr_t)ctx_sys_ptr, (uintptr_t)rom_stack, PRINT_STACK::SYS);
+
+#ifdef DEBUG_HWDT_NO4KEXTRA
+            /* Print separate ctx: cont stack */
+            print_stack((uintptr_t)ctx_cont_ptr, (uintptr_t)g_pcont->stack_end, PRINT_STACK::CONT);
 #endif
         }
-#endif
     }
 
     /*
@@ -444,13 +455,11 @@ static void ICACHE_RAM_ATTR handle_hwdt(void) {
      *  Used to confirm ROM_STACK_SIZE is large enough.
      */
     {
-        const uint32_t *uptr = skip_stackguard(rom_stack, rom_stack_first, CONT_STACKGUARD);
-        if (uptr) {
-            hwdt_info.rom = (uintptr_t)rom_stack_first - (uintptr_t)uptr;
+        const uint32_t *ctx_rom_ptr = skip_stackguard(rom_stack, rom_stack_first, CONT_STACKGUARD);
+        hwdt_info.rom = (uintptr_t)rom_stack_first - (uintptr_t)ctx_rom_ptr;
 #if defined(ROM_STACK_DUMP)
-            print_stack((uintptr_t)uptr, (uintptr_t)rom_stack_first, PRINT_STACK::ROM);
+        print_stack((uintptr_t)ctx_rom_ptr, (uintptr_t)rom_stack_first, PRINT_STACK::ROM);
 #endif
-        }
     }
 #endif
     ets_delay_us(12000); /* Let UART FiFo clear. */
@@ -477,20 +486,44 @@ void ICACHE_RAM_ATTR app_entry_start(void) {
     asm volatile("" ::: "memory");
     asm volatile("mov.n a1, %0\n"
                  "mov.n a3, %1\n"
-                 "jx a3\n" : : "r" (sys_stack_first), "r" (call_user_start) );
+                 "mov.n a0, %2\n"     // Should never return; however, set to Boot ROM Breakpoint
+                 "jx a3\n" : : "r" (sys_stack_first), "r" (call_user_start), "r" (0x4000044c) );
+
+    __builtin_unreachable();
+}
+
+
+void ICACHE_RAM_ATTR app_entry_redefinable2(void) {
+    handle_hwdt();
+    app_entry_start();
 
     __builtin_unreachable();
 }
 
 void ICACHE_RAM_ATTR app_entry_redefinable(void) {
-    handle_hwdt();
-    app_entry_start();
+    /*
+    * Make the ROM BSS zeroed out memory the home for our temporary stack.
+    * That way no additional information will be lost. And it allows us to
+    * reduce the size of rom_stack to near 640. TODO: Need to check on eboot's
+    * foot print as well.
+    */
+    asm volatile ("mov.n a1, %0\n"
+                  "mov.n a3, %1\n"
+                  "mov.n a0, %2\n"     // Should never return; however, set to Boot ROM Breakpoint
+                  "jx a3\n" : : "r" (0x3fffeb30), "r" (app_entry_redefinable2), "r" (0x4000044c) );
+
+// TODO: Look at assembly, had to split app_entry_redefinable like this to stop
+// some back indexing on the stack. Looks like some temporary storage was setup
+// and was being reference and I moved it away by changing the stack pointer.
+// Splitting the app_entry_redefinable into two part seems to have taken care of
+// the issue.
+
     __builtin_unreachable();
 }
 
 
-#if defined(HWDT_INFO)
 void initVariant(void) {
+#if defined(HWDT_INFO)
     /*
      * Fill the rom_stack while it is not actively being used.
      *
@@ -500,7 +533,7 @@ void initVariant(void) {
     for (size_t i = 0; i < g_rom_stack_A16_sz/sizeof(uint32_t); i++) {
         g_rom_stack[i] = CONT_STACKGUARD;
     }
-}
 #endif
+}
 
 };
