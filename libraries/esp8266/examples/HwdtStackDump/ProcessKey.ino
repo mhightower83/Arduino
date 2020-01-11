@@ -1,21 +1,31 @@
+#include <esp8266_undocumented.h>
+
+int* nullPointer = NULL;
+
 void processKey(Print& out, int hotKey) {
   switch (hotKey) {
     case 'r':
-      out.printf("Reset, ESP.reset(); (%ld ms) ...\n", millis());
+      out.printf_P(PSTR("Reset, ESP.reset(); ...\r\n"));
       ESP.reset();
       break;
     case 't':
-      out.printf("Restart, ESP.restart(); (%ld ms) ...\n", millis());
+      out.printf_P(PSTR("Restart, ESP.restart(); (%ld ms) ...\r\n"));
       ESP.restart();
       break;
     case 's':
-      out.printf("Crash with Software WDT (%ld ms) ...\n", millis());
-      while (true) {
-        // Wait for Software WDT to kick in.
+      {
+        uint32_t startTime = millis();
+        out.printf_P(PSTR("Now crashing with Software WDT. This will take about 3 seconds\r\n"));
+        ets_install_putc1(ets_putc);
+        while (true) {
+          ets_printf("%9lu\r", (millis() - startTime));
+          ets_delay_us(250000);
+          // stay in an loop blocking other system activity.
+        }
       }
       break;
     case 'h':
-      out.printf("Crash with Hardware WDT (%ld ms) ...\n", millis());
+      out.printf_P(PSTR("Now crashing with Hardware WDT. This will take about 6 seconds\r\n"));
       // ESP.wdtDisable();
       asm volatile("" ::: "memory");
       asm volatile ("mov.n a2, %0\n"
@@ -24,61 +34,48 @@ void processKey(Print& out, int hotKey) {
                     "mov.n a5, %1\n"
                     "mov.n a6, %1\n"
                     : : "r" (0xaaaaaaaa), "r" (0xaaaaaaaa), "r" (0xaaaaaaaa), "r" (0xaaaaaaaa), "r" (0xaaaaaaaa) );
-      // Could not find a stack save in the stack dumps, unless interrupts were enabled.
-      while (true) {
+      // Could not find these in the stack dump, unless interrupts were enabled.
+      {
+        uint32_t startTime = millis();
+        // Avoid all the Core functions that play nice, so we can hog
+        // the system and crash.
+        ets_install_putc1(ets_putc);
         xt_rsil(15);
-        // stay in an infinite loop doing nothing
-        // this way other process can not be executed
-        //
-        // Note:
-        // Hardware WDT kicks in if Software WDT is unable to perfrom.
-        // With the Hardware WDT, nothing is saved on the stack, that I have seen.
+        while (true) {
+          ets_printf("%9lu\r", (millis() - startTime));
+          ets_delay_us(250000);
+          // stay in an loop blocking other system activity.
+          //
+          // Note:
+          // Hardware WDT kicks in if Software WDT is unable to perform.
+          // With the Hardware WDT, nothing is saved on the stack, that I have seen.
+        }
       }
       break;
-
-    case 'z':
-      out.printf("Add a test (%ld ms) ...\n", millis());
-      break;
-    case 'm':
-      {
-        printDramMap(Serial);
-        break;
-      }
-    case 'u':
-      {
-        umm_info(NULL, true);
-        uint16_t hmax = 0;
-        uint8_t  hfrag = 0;
-        uint32_t hfree = 0;
-        ESP.getHeapStats(&hfree, &hmax, &hfrag);
-        out.printf("Heap Free Space:      %5u Bytes", hfree);
-        out.println();
-        out.printf("Heap Free Contiguous: %5u Bytes", hmax);
-        out.println();
-        out.printf("Heap Fragmentation:   %5u %%", hfrag);
-        out.println();
-      }
-      break;
-    case '\n':
     case '\r':
-      break;
-    default:
-      out.printf("\"%c\" - Not an option?  / ? - help", hotKey);
       out.println();
+    case '\n':
+      break;
     case '?':
       out.println();
-      out.println("Press a key + <enter>");
-      out.println("  r    - Reset, ESP.reset();");
-      out.println("  t    - Restart, ESP.restart();");
-      out.println("  u    - Print Heap Info, umm_info(NULL, true);");
-      out.println("  m    - DRAM Memory Map");
-      out.println("  z    - Test dejour");
-      out.println("  ?    - Print Help");
+      out.println(F("Press a key + <enter>"));
+      out.println(F("  r    - Reset, ESP.reset();"));
+      out.println(F("  t    - Restart, ESP.restart();"));
+      printHelpAddOn(out);
+      out.println(F("  ?    - Print Help"));
       out.println();
-      out.println("Crash with:");
-      out.println("  s    - Software WDT");
-      out.println("  h    - Hardware WDT");
+      out.println(F("Crash with:"));
+      out.println(F("  s    - Software WDT"));
+      out.println(F("  h    - Hardware WDT"));
       out.println();
+      break;
+    default:
+      if (hotKeyHandlerAddOn(out, hotKey)) {
+        return;
+      }
+      out.printf_P(PSTR("\"%c\" - Not an option?  / ? - help"), hotKey);
+      out.println();
+      processKey(out, '?');
       break;
   }
 }

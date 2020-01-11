@@ -1,6 +1,10 @@
 #ifndef HWDT_STACK_DUMP_H
 #define HWDT_STACK_DUMP_H
 
+#ifndef DEBUG_HWDT
+#define DEBUG_HWDT
+#endif
+
 typedef struct HWDT_INFO {
     uint32_t rom;
     uint32_t sys;
