@@ -194,12 +194,14 @@ int umm_usage_metric( void ) {
   return -1;  // no freeBlocks
 }
 
+uint32_t sqrt32 (uint32_t n);
 int umm_fragmentation_metric( void ) {
   DBGLOG_DEBUG( "freeBlocks %d freeBlocksSquared %d\n", umm_metrics.freeBlocks, ummHeapInfo.freeBlocksSquared);
   if (0 == ummHeapInfo.freeBlocks) {
       return 0;
   } else {
-      return (100 - (((uint32_t)(sqrtf(ummHeapInfo.freeBlocksSquared)) * 100)/(ummHeapInfo.freeBlocks)));
+      // return (100 - (((uint32_t)(sqrtf(ummHeapInfo.freeBlocksSquared)) * 100)/(ummHeapInfo.freeBlocks)));
+      return (100 - (((uint32_t)(sqrt32(ummHeapInfo.freeBlocksSquared)) * 100)/(ummHeapInfo.freeBlocks)));
   }
 }
 

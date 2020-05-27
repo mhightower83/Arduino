@@ -167,16 +167,10 @@ extern "C" {
 
 #define UMM_INFO
 #define UMM_BEST_FIT
-#undef  UMM_FIRST_FIT
 #define UMM_STATS
-#define UMM_INLINE_METRICS
+// #define UMM_STATS_FULL
+// #define UMM_INLINE_METRICS
 
-
-
-
-#ifdef UMM_TEST_BUILD
-extern char test_umm_heap[];
-#endif
 
 #ifdef UMM_TEST_BUILD
 /* Start addresses and the size of the heap */
@@ -208,8 +202,7 @@ extern char _heap_start[];
 
 /* -------------------------------------------------------------------------- */
 
-// #ifdef UMM_INLINE_METRICS
-#if defined(UMM_INLINE_METRICS) || defined(UMM_STATS) || defined(UMM_STATS_FULL)
+#ifdef UMM_INLINE_METRICS
   #define UMM_FRAGMENTATION_METRIC_INIT() umm_fragmentation_metric_init()
   #define UMM_FRAGMENTATION_METRIC_ADD(c) umm_fragmentation_metric_add(c)
   #define UMM_FRAGMENTATION_METRIC_REMOVE(c) umm_fragmentation_metric_remove(c)
@@ -231,7 +224,10 @@ extern char _heap_start[];
     unsigned int usedBlocks;
     unsigned int freeBlocks;
     unsigned int freeBlocksSquared;
-
+#ifdef UMM_INLINE_METRICS
+    size_t oom_count;
+    #define UMM_OOM_COUNT ummHeapInfo.oom_count
+#endif
     unsigned int maxFreeContiguousBlocks;
   }
   UMM_HEAP_INFO;
@@ -248,7 +244,7 @@ extern char _heap_start[];
   #define umm_free_heap_size() (0)
   #define umm_max_block_size() (0)
   #define umm_fragmentation_metric() (0)
-  #define umm_in_use_metric() (0)
+  #define umm_usage_metric() (0)
 #endif
 
 
@@ -269,9 +265,13 @@ extern char _heap_start[];
 
 typedef struct UMM_STATISTICS_t {
 #ifndef UMM_INLINE_METRICS
+// If not doing UMM_STATS_FULL and we are doing UMM_INLINE_METRICS we can move
+// oom_count to umm_info's structure and save a little DRAM and IRAM.
+// Otherwise it is defined here.
   unsigned short int free_blocks;
-#endif
   size_t oom_count;
+  #define UMM_OOM_COUNT ummStats.oom_count
+#endif
 #ifdef UMM_STATS_FULL
   unsigned short int free_blocks_min;
   unsigned short int free_blocks_isr_min;
@@ -288,13 +288,17 @@ typedef struct UMM_STATISTICS_t {
 UMM_STATISTICS;
 extern UMM_STATISTICS ummStats;
 
+#ifdef UMM_INLINE_METRICS
+#define STATS__FREE_BLOCKS_UPDATE(s) (void)(s)
+#else
 #define STATS__FREE_BLOCKS_UPDATE(s) ummStats.free_blocks += (s)
-#define STATS__OOM_UPDATE() ummStats.oom_count += 1
+#endif
+#define STATS__OOM_UPDATE() UMM_OOM_COUNT += 1
 
 size_t umm_free_heap_size_lw( void );
 
 static inline size_t ICACHE_FLASH_ATTR umm_get_oom_count( void ) {
-  return ummStats.oom_count;
+  return UMM_OOM_COUNT;
 }
 
 #else  // not UMM_STATS or UMM_STATS_FULL

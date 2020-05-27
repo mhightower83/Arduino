@@ -176,8 +176,11 @@ size_t umm_get_alloc_overhead(void) {
   return (size_t)UMM_OVERHEAD_ADJUST;
 }
 
-#if defined(UMM_STATS) || defined(UMM_STATS_FULL)
+#if (!defined(UMM_INLINE_METRICS) && defined(UMM_STATS)) || defined(UMM_STATS_FULL)
 UMM_STATISTICS ummStats;
+#endif
+
+#if defined(UMM_STATS) || defined(UMM_STATS_FULL)
 
 static size_t free_blocks_to_free_space(unsigned short int blocks) {
   int free_space = (int)blocks * sizeof(umm_block) - UMM_OVERHEAD_ADJUST;
@@ -222,7 +225,7 @@ void print_stats(int force) {
 #else
   DBGLOG_FORCE( force,   "  Free Space        %5u\n", ummStats.free_blocks * sizeof(umm_block));
 #endif
-  DBGLOG_FORCE( force,   "  OOM Count         %5u\n", ummStats.oom_count);
+  DBGLOG_FORCE( force,   "  OOM Count         %5u\n", UMM_OOM_COUNT);
 #if defined(UMM_STATS_FULL)
   DBGLOG_FORCE( force,   "  Low Watermark     %5u\n", ummStats.free_blocks_min * sizeof(umm_block));
   DBGLOG_FORCE( force,   "  Low Watermark ISR %5u\n", ummStats.free_blocks_isr_min * sizeof(umm_block));
@@ -232,25 +235,6 @@ void print_stats(int force) {
   DBGLOG_FORCE( force, "+--------------------------------------------------------------+\n" );
 }
 #endif
-
-#if !defined(UMM_INLINE_METRICS) && (defined(UMM_STATS) || defined(UMM_STATS_FULL))
-static void umm_fragmentation_metric_init( void ) {
-    ummStats.free_blocks = UMM_NUMBLOCKS - 2;
-}
-
-static void umm_fragmentation_metric_add( uint16_t c ) {
-    uint16_t blocks = (UMM_NBLOCK(c) & UMM_BLOCKNO_MASK) - c;
-    DBGLOG_DEBUG( "Add block %d size %d to free metric\n", c, blocks);
-    ummStats.free_blocks += blocks;
-}
-
-static void umm_fragmentation_metric_remove( uint16_t c ) {
-    uint16_t blocks = (UMM_NBLOCK(c) & UMM_BLOCKNO_MASK) - c;
-    DBGLOG_DEBUG( "Remove block %d size %d from free metric\n", c, blocks);
-    ummStats.free_blocks -= blocks;
-}
-#endif // !defined(UMM_INLINE_METRICS) && (defined(UMM_STATS) || defined(UMM_STATS_FULL))
-
 
 int ICACHE_FLASH_ATTR umm_info_safe_printf_P(const char *fmt, ...) {
     /*

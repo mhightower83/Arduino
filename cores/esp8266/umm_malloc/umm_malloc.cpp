@@ -67,6 +67,13 @@ extern "C" {
 
 //C This change is new in upstream umm_malloc.I think this would have created a
 //C breaking change. Keeping the old #define method in umm_malloc_cfg.h.
+//C I don't see a simple way of making it work. We would have to run code before
+//C the SDK has run to set a value for uint32_t UMM_MALLOC_CFG_HEAP_SIZE.
+//C On the other hand, a manual call to umm_init() before anything else has had a
+//C chance to run would mean that all those calls testing to see if the heap has
+//C been initialized at every umm_malloc API could be removed.
+//C
+//C before starting the NON OS SDK
 //C extern void *UMM_MALLOC_CFG_HEAP_ADDR;
 //C extern uint32_t UMM_MALLOC_CFG_HEAP_SIZE;
 
@@ -333,6 +340,9 @@ static void umm_free_core( void *ptr ) {
 
   DBGLOG_DEBUG( "Freeing block %6d\n", c );
 
+  /* Update stats Free Block count */
+  STATS__FREE_BLOCKS_UPDATE(UMM_NBLOCK(c) - c);
+
   /* Now let's assimilate this block with the next one if possible. */
 
   umm_assimilate_up( c );
@@ -495,6 +505,7 @@ static void *umm_malloc_core( size_t size ) {
       UMM_NFREE( cf + blocks ) = UMM_NFREE(cf);
     }
 
+    STATS__FREE_BLOCKS_UPDATE( -blocks );
     STATS__FREE_BLOCKS_MIN();
   } else {
     /* Out of memory */
@@ -691,6 +702,7 @@ void *umm_realloc( void *ptr, size_t size ) {
     } else if ((0 == prevBlockSize) && (blockSize + nextBlockSize) >= blocks) {
         DBGLOG_DEBUG( "realloc using next block - %i\n", blocks );
         umm_assimilate_up( c );
+        STATS__FREE_BLOCKS_UPDATE( - nextBlockSize );
         blockSize += nextBlockSize;
 
     //  Case 4 - prev block + block fits
@@ -698,6 +710,7 @@ void *umm_realloc( void *ptr, size_t size ) {
         DBGLOG_DEBUG( "realloc using prev block - %i\n", blocks );
         umm_disconnect_from_free_list( UMM_PBLOCK(c) );
         c = umm_assimilate_down(c, 0);
+        STATS__FREE_BLOCKS_UPDATE( - prevBlockSize );
         STATS__FREE_BLOCKS_ISR_MIN();
         blockSize += prevBlockSize;
         UMM_CRITICAL_SUSPEND(id_realloc);
@@ -710,6 +723,7 @@ void *umm_realloc( void *ptr, size_t size ) {
         umm_assimilate_up( c );
         umm_disconnect_from_free_list( UMM_PBLOCK(c) );
         c = umm_assimilate_down(c, 0);
+        STATS__FREE_BLOCKS_UPDATE( - prevBlockSize - nextBlockSize );
 #ifdef UMM_LIGHTWEIGHT_CPU
         if ((prevBlockSize + blockSize + nextBlockSize) > blocks) {
             umm_split_block( c, blocks, 0 );
@@ -774,6 +788,7 @@ void *umm_realloc( void *ptr, size_t size ) {
    if (prevBlockSize && (prevBlockSize + blockSize + nextBlockSize) >= blocks) { // 1
         umm_disconnect_from_free_list( UMM_PBLOCK(c) );
         c = umm_assimilate_down(c, 0);
+        STATS__FREE_BLOCKS_UPDATE( - prevBlockSize );
         blockSize += prevBlockSize;
         if (blockSize >= blocks) {
             DBGLOG_DEBUG( "realloc using prev block - %d\n", blocks );
@@ -781,6 +796,7 @@ void *umm_realloc( void *ptr, size_t size ) {
         } else {
             DBGLOG_DEBUG( "realloc using prev and next block - %d\n", blocks );
             umm_assimilate_up( c );
+            STATS__FREE_BLOCKS_UPDATE( - nextBlockSize );
             blockSize += nextBlockSize;
 #ifdef UMM_LIGHTWEIGHT_CPU
             if (blockSize > blocks) {
@@ -801,6 +817,7 @@ void *umm_realloc( void *ptr, size_t size ) {
     } else if ((blockSize + nextBlockSize) >= blocks) { // 3
         DBGLOG_DEBUG( "realloc using next block - %d\n", blocks );
         umm_assimilate_up( c );
+        STATS__FREE_BLOCKS_UPDATE( - nextBlockSize );
         blockSize += nextBlockSize;
     } else { // 4
         DBGLOG_DEBUG( "realloc a completely new block %d\n", blocks );
