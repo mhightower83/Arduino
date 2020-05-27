@@ -8,6 +8,10 @@
 #ifndef _UMM_MALLOC_CFG_H
 #define _UMM_MALLOC_CFG_H
 
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+
 #include <debug.h>
 #include <pgmspace.h>
 #include <esp8266_undocumented.h>
@@ -28,21 +32,55 @@ extern "C" {
  * You can set them in your config file umm_malloc_cfg.h.
  * In GNU C, you also can set these compile time defines like this:
  *
- * -D UMM_TEST_MAIN
+ * Unless otherwise noted, the default state of these values is #undef-ined!
+ *
+ * If you set them via the -D option on the command line (preferred method)
+ * then this file handles all the configuration automagically and warns if
+ * there is an incompatible configuration.
+ *
+ * UMM_TEST_BUILD
  *
  * Set this if you want to compile in the test suite
  *
- * -D UMM_BEST_FIT (defualt)
+ * UMM_BEST_FIT (default)
  *
- * Set this if you want to use a best-fit algorithm for allocating new
- * blocks
+ * Set this if you want to use a best-fit algorithm for allocating new blocks.
+ * On by default, turned off by UMM_FIRST_FIT
  *
- * -D UMM_FIRST_FIT
+ * UMM_FIRST_FIT
  *
- * Set this if you want to use a first-fit algorithm for allocating new
- * blocks
+ * Set this if you want to use a first-fit algorithm for allocating new blocks.
+ * Faster than UMM_BEST_FIT but can result in higher fragmentation.
  *
- * -D UMM_DBG_LOG_LEVEL=n
+ * UMM_INFO
+ *
+ * Enables a dump of the heap contents and a function to return the total
+ * heap size that is unallocated - note this is not the same as the largest
+ * unallocated block on the heap!
+ *
+ * Set if you want the ability to calculate metrics on demand
+ *
+ * UMM_INLINE_METRICS
+ *
+ * Set this if you want to have access to a minimal set of heap metrics that
+ * can be used to gauge heap health.
+ * Setting this at compile time will automatically set UMM_INFO.
+ * Note that enabling this define will add a slight runtime penalty.
+ *
+ * UMM_INTEGRITY_CHECK
+ *
+ * Set if you want to be able to verify that the heap is semantically correct
+ * before or after any heap operation - all of the block indexes in the heap
+ * make sense.
+ * Slows execution dramatically but catches errors really quickly.
+ *
+ * UMM_POISON_CHECK
+ *
+ * Set if you want to be able to leave a poison buffer around each allocation.
+ * Note this uses an extra 8 bytes per allocation, but you get the benefit of
+ * being able to detect if your program is writing past an allocated buffer.
+ *
+ * UMM_DBG_LOG_LEVEL=n
  *
  * Set n to a value from 0 to 6 depending on how verbose you want the debug
  * log to be
@@ -56,63 +94,52 @@ extern "C" {
  * ----------------------------------------------------------------------------
  */
 
-#ifdef TEST_BUILD
-extern char test_umm_heap[];
-#endif
-
-#ifdef TEST_BUILD
-/* Start addresses and the size of the heap */
-#define UMM_MALLOC_CFG_HEAP_ADDR (test_umm_heap)
-#define UMM_MALLOC_CFG_HEAP_SIZE 0x10000
-#else
-/* Start addresses and the size of the heap */
-extern char _heap_start[];
-#define UMM_MALLOC_CFG_HEAP_ADDR   ((uint32_t)&_heap_start[0])
-#define UMM_MALLOC_CFG_HEAP_SIZE   ((size_t)(0x3fffc000 - UMM_MALLOC_CFG_HEAP_ADDR))
-#endif
-
-/* A couple of macros to make packing structures less compiler dependent */
-
-#define UMM_H_ATTPACKPRE
-#define UMM_H_ATTPACKSUF __attribute__((__packed__))
-
-#define UMM_BEST_FIT
-#undef  UMM_FIRST_FIT
 
 /*
- * -D UMM_INFO :
+ * -D UMM_POISON_CHECK :
+ * -D UMM_POISON_CHECK_LITE
  *
- * Enables a dup of the heap contents and a function to return the total
- * heap size that is unallocated - note this is not the same as the largest
- * unallocated block on the heap!
+ * Enables heap poisoning: add predefined value (poison) before and after each
+ * allocation, and check before each heap operation that no poison is
+ * corrupted.
+ *
+ * Other than the poison itself, we need to store exact user-requested length
+ * for each buffer, so that overrun by just 1 byte will be always noticed.
+ *
+ * Customizations:
+ *
+ *    UMM_POISON_SIZE_BEFORE:
+ *      Number of poison bytes before each block, e.g. 4
+ *    UMM_POISON_SIZE_AFTER:
+ *      Number of poison bytes after each block e.g. 4
+ *    UMM_POISONED_BLOCK_LEN_TYPE
+ *      Type of the exact buffer length, e.g. `uint16_t`
+ *
+ * NOTE: each allocated buffer is aligned by 4 bytes. But when poisoning is
+ * enabled, actual pointer returned to user is shifted by
+ * `(sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE)`.
+ * It's your responsibility to make resulting pointers aligned appropriately.
+ *
+ * If poison corruption is detected, the message is printed and user-provided
+ * callback is called: `UMM_HEAP_CORRUPTION_CB()`
+ *
+ * UMM_POISON_CHECK - does a global heap check on all active allocation at
+ * every alloc API call. May exceed 10us due to critical section with IRQs
+ * disabled.
+ *
+ * UMM_POISON_CHECK_LITE - checks the allocation presented at realloc()
+ * and free(). Expands the poison check on the current allocation to
+ * include its nearest allocated neighbors in the heap.
+ * umm_malloc() will also checks the neighbors of the selected allocation
+ * before use.
+ *
+ * Status: TODO?: UMM_POISON_CHECK_LITE is a new option. We could propose for
+ * upstream; however, the upstream version has much of the framework for calling
+ * poison check on each alloc call refactored out. Not sure how this will be
+ * received.
  */
 
-#define UMM_INFO
-
-#ifdef UMM_INFO
-  typedef struct UMM_HEAP_INFO_t {
-    unsigned short int totalEntries;
-    unsigned short int usedEntries;
-    unsigned short int freeEntries;
-
-    unsigned short int totalBlocks;
-    unsigned short int usedBlocks;
-    unsigned short int freeBlocks;
-
-    unsigned short int maxFreeContiguousBlocks;
-
-    unsigned int freeSize2;
-  }
-  UMM_HEAP_INFO;
-
-  extern UMM_HEAP_INFO ummHeapInfo;
-
-  void ICACHE_FLASH_ATTR *umm_info( void *ptr, int force );
-  size_t ICACHE_FLASH_ATTR umm_free_heap_size( void );
-  size_t ICACHE_FLASH_ATTR umm_max_block_size( void );
-#else
-#endif
-
+/////////////////////////////////////////////////////////////////////////////
 /*
  * -D UMM_STATS :
  * -D UMM_STATS_FULL
@@ -138,8 +165,95 @@ extern char _heap_start[];
 #define UMM_STATS_FULL
  */
 
+#define UMM_INFO
+#define UMM_BEST_FIT
+#undef  UMM_FIRST_FIT
+#define UMM_STATS
+#define UMM_INLINE_METRICS
+
+
+
+
+#ifdef UMM_TEST_BUILD
+extern char test_umm_heap[];
+#endif
+
+#ifdef UMM_TEST_BUILD
+/* Start addresses and the size of the heap */
+#define UMM_MALLOC_CFG_HEAP_ADDR (test_umm_heap)
+#define UMM_MALLOC_CFG_HEAP_SIZE 0x10000
+#else
+/* Start addresses and the size of the heap */
+extern char _heap_start[];
+#define UMM_MALLOC_CFG_HEAP_ADDR   ((uint32_t)&_heap_start[0])
+#define UMM_MALLOC_CFG_HEAP_SIZE   ((size_t)(0x3fffc000 - UMM_MALLOC_CFG_HEAP_ADDR))
+#endif
+
+/* A couple of macros to make packing structures less compiler dependent */
+
+#define UMM_H_ATTPACKPRE
+#define UMM_H_ATTPACKSUF __attribute__((__packed__))
+
+/* -------------------------------------------------------------------------- */
+
+#ifdef UMM_BEST_FIT
+  #ifdef  UMM_FIRST_FIT
+    #error Both UMM_BEST_FIT and UMM_FIRST_FIT are defined - pick one!
+  #endif
+#else /* UMM_BEST_FIT is not defined */
+  #ifndef UMM_FIRST_FIT
+    #define UMM_BEST_FIT
+  #endif
+#endif
+
+/* -------------------------------------------------------------------------- */
+
+// #ifdef UMM_INLINE_METRICS
+#if defined(UMM_INLINE_METRICS) || defined(UMM_STATS) || defined(UMM_STATS_FULL)
+  #define UMM_FRAGMENTATION_METRIC_INIT() umm_fragmentation_metric_init()
+  #define UMM_FRAGMENTATION_METRIC_ADD(c) umm_fragmentation_metric_add(c)
+  #define UMM_FRAGMENTATION_METRIC_REMOVE(c) umm_fragmentation_metric_remove(c)
+#else
+  #define UMM_FRAGMENTATION_METRIC_INIT()
+  #define UMM_FRAGMENTATION_METRIC_ADD(c)
+  #define UMM_FRAGMENTATION_METRIC_REMOVE(c)
+#endif // UMM_INLINE_METRICS
+
+/* -------------------------------------------------------------------------- */
+
+#ifdef UMM_INFO
+  typedef struct UMM_HEAP_INFO_t {
+    unsigned int totalEntries;
+    unsigned int usedEntries;
+    unsigned int freeEntries;
+
+    unsigned int totalBlocks;
+    unsigned int usedBlocks;
+    unsigned int freeBlocks;
+    unsigned int freeBlocksSquared;
+
+    unsigned int maxFreeContiguousBlocks;
+  }
+  UMM_HEAP_INFO;
+
+  extern UMM_HEAP_INFO ummHeapInfo;
+
+  extern ICACHE_FLASH_ATTR void *umm_info( void *ptr, bool force );
+  extern ICACHE_FLASH_ATTR size_t umm_free_heap_size( void );
+  extern ICACHE_FLASH_ATTR size_t umm_max_block_size( void );
+  extern ICACHE_FLASH_ATTR int umm_usage_metric( void );
+  extern ICACHE_FLASH_ATTR int umm_fragmentation_metric( void );
+#else
+  #define umm_info(p,b)
+  #define umm_free_heap_size() (0)
+  #define umm_max_block_size() (0)
+  #define umm_fragmentation_metric() (0)
+  #define umm_in_use_metric() (0)
+#endif
+
+
 /*
- * For the ESP8266 we want at lest UMM_STATS built, so we have an ISR safe
+ * For the ESP8266 we want at least UMM_STATS built, so we have an ISR safe
  * function to call for implementing xPortGetFreeHeapSize(), because umm_info()
  * is in flash.
  */
@@ -154,7 +268,9 @@ extern char _heap_start[];
 #if defined(UMM_STATS) || defined(UMM_STATS_FULL)
 
 typedef struct UMM_STATISTICS_t {
+#ifndef UMM_INLINE_METRICS
   unsigned short int free_blocks;
+#endif
   size_t oom_count;
 #ifdef UMM_STATS_FULL
   unsigned short int free_blocks_min;
@@ -190,7 +306,22 @@ static inline size_t ICACHE_FLASH_ATTR umm_get_oom_count( void ) {
 size_t ICACHE_FLASH_ATTR umm_block_size( void );
 #endif
 
+size_t umm_get_alloc_overhead(void);
+
 #ifdef UMM_STATS_FULL
+#ifdef UMM_INLINE_METRICS
+#define STATS__FREE_BLOCKS_MIN() \
+do { \
+    if (ummHeapInfo.freeBlocks < ummStats.free_blocks_min) \
+        ummStats.free_blocks_min = ummHeapInfo.freeBlocks; \
+} while(false)
+
+#define STATS__FREE_BLOCKS_ISR_MIN() \
+do { \
+    if (ummHeapInfo.freeBlocks < ummStats.free_blocks_isr_min) \
+        ummStats.free_blocks_isr_min = ummHeapInfo.freeBlocks; \
+} while(false)
+#else
 #define STATS__FREE_BLOCKS_MIN() \
 do { \
     if (ummStats.free_blocks < ummStats.free_blocks_min) \
@@ -202,6 +333,7 @@ do { \
     if (ummStats.free_blocks < ummStats.free_blocks_isr_min) \
         ummStats.free_blocks_isr_min = ummStats.free_blocks; \
 } while(false)
+#endif
 
 #define STATS__ALLOC_REQUEST(tag, s)  \
 do { \
@@ -231,7 +363,11 @@ static inline size_t ICACHE_FLASH_ATTR umm_free_heap_size_lw_min( void ) {
 }
 
 static inline size_t ICACHE_FLASH_ATTR umm_free_heap_size_min_reset( void ) {
+#ifdef UMM_INLINE_METRICS
+  ummStats.free_blocks_min = ummHeapInfo.freeBlocks;
+#else
   ummStats.free_blocks_min = ummStats.free_blocks;
+#endif
   return (size_t)ummStats.free_blocks_min * umm_block_size();
 }
 
@@ -349,6 +485,8 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
   xt_wsr_ps(*saved_ps);
 }
 #endif
+//////////////////////////////////////////////////////////////////////////////////////
+
 
 /*
  * A couple of macros to make it easier to protect the memory allocator
@@ -360,7 +498,7 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
  * called from within umm_malloc()
  */
 
-#ifdef TEST_BUILD
+#ifdef UMM_TEST_BUILD
     extern int umm_critical_depth;
     extern int umm_max_critical_depth;
     #define UMM_CRITICAL_ENTRY() {\
@@ -458,7 +596,7 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
  */
 
 #ifdef UMM_INTEGRITY_CHECK
-   int umm_integrity_check( void );
+   extern bool umm_integrity_check( void );
 #  define INTEGRITY_CHECK() umm_integrity_check()
    extern void umm_corruption(void);
 #  define UMM_HEAP_CORRUPTION_CB() DBGLOG_FUNCTION( "Heap Corruption!" )
@@ -467,50 +605,6 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
 #endif
 
 /////////////////////////////////////////////////
-
-/*
- * -D UMM_POISON_CHECK :
- * -D UMM_POISON_CHECK_LITE
- *
- * Enables heap poisoning: add predefined value (poison) before and after each
- * allocation, and check before each heap operation that no poison is
- * corrupted.
- *
- * Other than the poison itself, we need to store exact user-requested length
- * for each buffer, so that overrun by just 1 byte will be always noticed.
- *
- * Customizations:
- *
- *    UMM_POISON_SIZE_BEFORE:
- *      Number of poison bytes before each block, e.g. 2
- *    UMM_POISON_SIZE_AFTER:
- *      Number of poison bytes after each block e.g. 2
- *    UMM_POISONED_BLOCK_LEN_TYPE
- *      Type of the exact buffer length, e.g. `short`
- *
- * NOTE: each allocated buffer is aligned by 4 bytes. But when poisoning is
- * enabled, actual pointer returned to user is shifted by
- * `(sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE)`.
- * It's your responsibility to make resulting pointers aligned appropriately.
- *
- * If poison corruption is detected, the message is printed and user-provided
- * callback is called: `UMM_HEAP_CORRUPTION_CB()`
- *
- * UMM_POISON_CHECK - does a global heap check on all active allocation at
- * every alloc API call. May exceed 10us due to critical section with IRQs
- * disabled.
- *
- * UMM_POISON_CHECK_LITE - checks the allocation presented at realloc()
- * and free(). Expands the poison check on the current allocation to
- * include its nearest allocated neighbors in the heap.
- * umm_malloc() will also checks the neighbors of the selected allocation
- * before use.
- *
- * Status: TODO?: UMM_POISON_CHECK_LITE is a new option. We could propose for
- * upstream; however, the upstream version has much of the framework for calling
- * poison check on each alloc call refactored out. Not sure how this will be
- * received.
- */
 
 /*
  * Compatibility for deprecated UMM_POISON
@@ -528,16 +622,16 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
 #endif
 #endif
 
-#define UMM_POISON_SIZE_BEFORE 4
-#define UMM_POISON_SIZE_AFTER 4
-#define UMM_POISONED_BLOCK_LEN_TYPE uint32_t
+#define UMM_POISON_SIZE_BEFORE (4)
+#define UMM_POISON_SIZE_AFTER (4)
+#define UMM_POISONED_BLOCK_LEN_TYPE uint16_t
 
 #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
-   void *umm_poison_malloc( size_t size );
-   void *umm_poison_calloc( size_t num, size_t size );
-   void *umm_poison_realloc( void *ptr, size_t size );
-   void  umm_poison_free( void *ptr );
-   int   umm_poison_check( void );
+   extern void *umm_poison_malloc( size_t size );
+   extern void *umm_poison_calloc( size_t num, size_t size );
+   extern void *umm_poison_realloc( void *ptr, size_t size );
+   extern void  umm_poison_free( void *ptr );
+   extern bool  umm_poison_check( void );
    // Local Additions to better report location in code of the caller.
    void *umm_poison_realloc_fl( void *ptr, size_t size, const char* file, int line );
    void  umm_poison_free_fl( void *ptr, const char* file, int line );
@@ -572,6 +666,10 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
 #define DBGLOG_FUNCTION(fmt, ...) ets_uart_printf(fmt, ##__VA_ARGS__)
 #else
 #define DBGLOG_FUNCTION(fmt, ...)   do { (void)fmt; } while(false)
+#endif
+
+#ifndef DBGLOG_32_BIT_PTR
+#define DBGLOG_32_BIT_PTR(x) ((uint32_t)(((uintptr_t)(x)) & 0xffffffff))
 #endif
 
 /////////////////////////////////////////////////
