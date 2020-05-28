@@ -183,7 +183,6 @@ size_t umm_free_heap_size( void ) {
 //C size_t umm_max_free_block_size( void ) {
 size_t umm_max_block_size( void ) {
   umm_info(NULL, 0);
-  // return ummHeapInfo.maxFreeContiguousBlocks * sizeof(umm_block) - umm_get_alloc_overhead();
   return umm_free_blocks_to_free_space(ummHeapInfo.maxFreeContiguousBlocks);
 }
 

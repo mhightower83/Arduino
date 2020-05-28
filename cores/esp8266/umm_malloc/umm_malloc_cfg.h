@@ -8,10 +8,6 @@
 #ifndef _UMM_MALLOC_CFG_H
 #define _UMM_MALLOC_CFG_H
 
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
-
 #include <debug.h>
 #include <pgmspace.h>
 #include <esp8266_undocumented.h>
@@ -94,83 +90,12 @@ extern "C" {
  * ----------------------------------------------------------------------------
  */
 
-
-/*
- * -D UMM_POISON_CHECK :
- * -D UMM_POISON_CHECK_LITE
- *
- * Enables heap poisoning: add predefined value (poison) before and after each
- * allocation, and check before each heap operation that no poison is
- * corrupted.
- *
- * Other than the poison itself, we need to store exact user-requested length
- * for each buffer, so that overrun by just 1 byte will be always noticed.
- *
- * Customizations:
- *
- *    UMM_POISON_SIZE_BEFORE:
- *      Number of poison bytes before each block, e.g. 4
- *    UMM_POISON_SIZE_AFTER:
- *      Number of poison bytes after each block e.g. 4
- *    UMM_POISONED_BLOCK_LEN_TYPE
- *      Type of the exact buffer length, e.g. `uint16_t`
- *
- * NOTE: each allocated buffer is aligned by 4 bytes. But when poisoning is
- * enabled, actual pointer returned to user is shifted by
- * `(sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE)`.
- * It's your responsibility to make resulting pointers aligned appropriately.
- *
- * If poison corruption is detected, the message is printed and user-provided
- * callback is called: `UMM_HEAP_CORRUPTION_CB()`
- *
- * UMM_POISON_CHECK - does a global heap check on all active allocation at
- * every alloc API call. May exceed 10us due to critical section with IRQs
- * disabled.
- *
- * UMM_POISON_CHECK_LITE - checks the allocation presented at realloc()
- * and free(). Expands the poison check on the current allocation to
- * include its nearest allocated neighbors in the heap.
- * umm_malloc() will also checks the neighbors of the selected allocation
- * before use.
- *
- * Status: TODO?: UMM_POISON_CHECK_LITE is a new option. We could propose for
- * upstream; however, the upstream version has much of the framework for calling
- * poison check on each alloc call refactored out. Not sure how this will be
- * received.
- */
-
-/////////////////////////////////////////////////////////////////////////////
-/*
- * -D UMM_STATS :
- * -D UMM_STATS_FULL
- *
- * This option provides a lightweight alternative to using `umm_info` just for
- * getting `umm_free_heap_size`.  With this option, a "free blocks" value is
- * updated on each call to malloc/free/realloc. This option does not offer all
- * the information that `umm_info` would have generated.
- *
- * This option is good for cases where the free heap is checked frequently. An
- * example is when an app closely monitors free heap to detect memory leaks. In
- * this case a single-core CPUs interrupt processing would have suffered the
- * most.
- *
- * UMM_STATS_FULL provides additional heap statistics. It can be used to gain
- * additional insight into heap usage. This option would add an additional 132
- * bytes of IRAM.
- *
- * Status: TODO: Needs to be proposed for upstream.
- */
-/*
-#define UMM_STATS
-#define UMM_STATS_FULL
- */
-
-#define UMM_INFO
 #define UMM_BEST_FIT
-#define UMM_STATS
-// #define UMM_STATS_FULL
-// #define UMM_INLINE_METRICS
 
+
+#ifdef UMM_TEST_BUILD
+extern char test_umm_heap[];
+#endif
 
 #ifdef UMM_TEST_BUILD
 /* Start addresses and the size of the heap */
@@ -214,6 +139,16 @@ extern char _heap_start[];
 
 /* -------------------------------------------------------------------------- */
 
+/*
+ * -D UMM_INFO :
+ *
+ * Enables a dup of the heap contents and a function to return the total
+ * heap size that is unallocated - note this is not the same as the largest
+ * unallocated block on the heap!
+ */
+
+#define UMM_INFO
+
 #ifdef UMM_INFO
   typedef struct UMM_HEAP_INFO_t {
     unsigned int totalEntries;
@@ -236,7 +171,11 @@ extern char _heap_start[];
   extern UMM_HEAP_INFO ummHeapInfo;
 
   extern ICACHE_FLASH_ATTR void *umm_info( void *ptr, bool force );
+#ifdef UMM_INLINE_METRICS
+  extern size_t umm_free_heap_size( void );
+#else
   extern ICACHE_FLASH_ATTR size_t umm_free_heap_size( void );
+#endif
   extern ICACHE_FLASH_ATTR size_t umm_max_block_size( void );
   extern ICACHE_FLASH_ATTR int umm_usage_metric( void );
   extern ICACHE_FLASH_ATTR int umm_fragmentation_metric( void );
@@ -248,10 +187,36 @@ extern char _heap_start[];
   #define umm_usage_metric() (0)
 #endif
 
-extern size_t umm_free_blocks_to_free_space(unsigned short int blocks);
+extern size_t umm_free_blocks_to_free_space(uint16_t blocks);
+extern size_t umm_get_alloc_overhead(void);
 
 /*
- * For the ESP8266 we want at least UMM_STATS built, so we have an ISR safe
+ * -D UMM_STATS :
+ * -D UMM_STATS_FULL
+ *
+ * This option provides a lightweight alternative to using `umm_info` just for
+ * getting `umm_free_heap_size`.  With this option, a "free blocks" value is
+ * updated on each call to malloc/free/realloc. This option does not offer all
+ * the information that `umm_info` would have generated.
+ *
+ * This option is good for cases where the free heap is checked frequently. An
+ * example is when an app closely monitors free heap to detect memory leaks. In
+ * this case a single-core CPUs interrupt processing would have suffered the
+ * most.
+ *
+ * UMM_STATS_FULL provides additional heap statistics. It can be used to gain
+ * additional insight into heap usage. This option would add an additional 132
+ * bytes of IRAM.
+ *
+ * Status: TODO: Needs to be proposed for upstream.
+ */
+/*
+#define UMM_STATS
+#define UMM_STATS_FULL
+ */
+
+/*
+ * For the ESP8266 we want at lest UMM_STATS built, so we have an ISR safe
  * function to call for implementing xPortGetFreeHeapSize(), because umm_info()
  * is in flash.
  */
@@ -270,14 +235,14 @@ typedef struct UMM_STATISTICS_t {
 // If not doing UMM_STATS_FULL and we are doing UMM_INLINE_METRICS we can move
 // oom_count to umm_info's structure and save a little DRAM and IRAM.
 // Otherwise it is defined here.
-  unsigned short int free_blocks;
+  size_t free_blocks;
   size_t oom_count;
   #define UMM_OOM_COUNT ummStats.oom_count
   #define UMM_FREE_BLOCKS ummStats.free_blocks
 #endif
 #ifdef UMM_STATS_FULL
-  unsigned short int free_blocks_min;
-  unsigned short int free_blocks_isr_min;
+  size_t free_blocks_min;
+  size_t free_blocks_isr_min;
   size_t alloc_max_size;
   size_t last_alloc_size;
   size_t id_malloc_count;
@@ -314,10 +279,7 @@ static inline size_t ICACHE_FLASH_ATTR umm_get_oom_count( void ) {
 size_t ICACHE_FLASH_ATTR umm_block_size( void );
 #endif
 
-size_t umm_get_alloc_overhead(void);
-
 #ifdef UMM_STATS_FULL
-
 #define STATS__FREE_BLOCKS_MIN() \
 do { \
     if (UMM_FREE_BLOCKS < ummStats.free_blocks_min) \
@@ -410,7 +372,6 @@ static inline size_t ICACHE_FLASH_ATTR umm_get_free_null_count( void ) {
 #define STATS__NULL_FREE_REQUEST(tag)     (void)0
 #define STATS__FREE_REQUEST(tag)          (void)0
 #endif
-
 
 /*
   Per Devyte, the core currently doesn't support masking a specific interrupt
@@ -599,6 +560,50 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
 /////////////////////////////////////////////////
 
 /*
+ * -D UMM_POISON_CHECK :
+ * -D UMM_POISON_CHECK_LITE
+ *
+ * Enables heap poisoning: add predefined value (poison) before and after each
+ * allocation, and check before each heap operation that no poison is
+ * corrupted.
+ *
+ * Other than the poison itself, we need to store exact user-requested length
+ * for each buffer, so that overrun by just 1 byte will be always noticed.
+ *
+ * Customizations:
+ *
+ *    UMM_POISON_SIZE_BEFORE:
+ *      Number of poison bytes before each block, e.g. 2
+ *    UMM_POISON_SIZE_AFTER:
+ *      Number of poison bytes after each block e.g. 2
+ *    UMM_POISONED_BLOCK_LEN_TYPE
+ *      Type of the exact buffer length, e.g. `short`
+ *
+ * NOTE: each allocated buffer is aligned by 4 bytes. But when poisoning is
+ * enabled, actual pointer returned to user is shifted by
+ * `(sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE)`.
+ * It's your responsibility to make resulting pointers aligned appropriately.
+ *
+ * If poison corruption is detected, the message is printed and user-provided
+ * callback is called: `UMM_HEAP_CORRUPTION_CB()`
+ *
+ * UMM_POISON_CHECK - does a global heap check on all active allocation at
+ * every alloc API call. May exceed 10us due to critical section with IRQs
+ * disabled.
+ *
+ * UMM_POISON_CHECK_LITE - checks the allocation presented at realloc()
+ * and free(). Expands the poison check on the current allocation to
+ * include its nearest allocated neighbors in the heap.
+ * umm_malloc() will also checks the neighbors of the selected allocation
+ * before use.
+ *
+ * Status: TODO?: UMM_POISON_CHECK_LITE is a new option. We could propose for
+ * upstream; however, the upstream version has much of the framework for calling
+ * poison check on each alloc call refactored out. Not sure how this will be
+ * received.
+ */
+
+/*
  * Compatibility for deprecated UMM_POISON
  */
 #if defined(UMM_POISON) && !defined(UMM_POISON_CHECK)
@@ -616,7 +621,11 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
 
 #define UMM_POISON_SIZE_BEFORE (4)
 #define UMM_POISON_SIZE_AFTER (4)
-#define UMM_POISONED_BLOCK_LEN_TYPE uint16_t
+#define UMM_POISONED_BLOCK_LEN_TYPE uint32_t
+// Breaking chnage in upstream. Changing from uint32_t to uint16_t causes
+// allocations to not be on a 32-bit word boundary. uint16_t can be used;
+// however, UMM_POISON_SIZE_BEFORE has to increase or decrease to compensate.
+// #define UMM_POISONED_BLOCK_LEN_TYPE uint16_t
 
 #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
    extern void *umm_poison_malloc( size_t size );
@@ -658,10 +667,6 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
 #define DBGLOG_FUNCTION(fmt, ...) ets_uart_printf(fmt, ##__VA_ARGS__)
 #else
 #define DBGLOG_FUNCTION(fmt, ...)   do { (void)fmt; } while(false)
-#endif
-
-#ifndef DBGLOG_32_BIT_PTR
-#define DBGLOG_32_BIT_PTR(x) ((uint32_t)(((uintptr_t)(x)) & 0xffffffff))
 #endif
 
 /////////////////////////////////////////////////

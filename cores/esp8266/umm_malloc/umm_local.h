@@ -37,7 +37,7 @@
 
 
 #if defined(UMM_POISON_CHECK_LITE)
-static int check_poison_neighbors( unsigned short cur );
+static bool check_poison_neighbors( uint16_t cur );
 #endif
 
 

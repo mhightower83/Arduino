@@ -130,15 +130,15 @@ static void *get_poisoned( void *vptr, size_t size_w_poison ) {
  * Returns unpoisoned pointer, i.e. actual pointer to the allocated memory.
  */
 static void *get_unpoisoned( void *vptr ) {
-  unsigned char *ptr = (unsigned char *)vptr;
+   uintptr_t ptr = (uintptr_t)vptr;
 
-  if (ptr != NULL) {
+  if (ptr != 0) {
     uint16_t c;
 
     ptr -= (sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE);
 
     /* Figure out which block we're in. Note the use of truncated division... */
-    c = (((uintptr_t)ptr)-(uintptr_t)(&(umm_heap[0])))/sizeof(umm_block);
+    c = (ptr - (uintptr_t)(&(umm_heap[0])))/sizeof(umm_block);
 
     check_poison_block(&UMM_BLOCK(c));
   }
@@ -212,7 +212,7 @@ void umm_poison_free( void *ptr ) {
 bool umm_poison_check(void) {
   UMM_CRITICAL_DECL(id_poison);
   bool ok = true;
-  unsigned short int cur;
+  uint16_t cur;
 
   if (umm_heap == NULL) {
     umm_init();
