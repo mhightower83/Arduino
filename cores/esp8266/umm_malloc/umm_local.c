@@ -180,28 +180,23 @@ size_t umm_get_alloc_overhead(void) {
 UMM_STATISTICS ummStats;
 #endif
 
-#if defined(UMM_STATS) || defined(UMM_STATS_FULL)
-
+#if defined(UMM_INFO) || defined(UMM_STATS) || defined(UMM_STATS_FULL)
+// The value returned is adjusted down by the required overhead, to allow for a
+// successful malloc of 100% of free memory, with the assumption that the
+// available memory is contiguous.
 static size_t free_blocks_to_free_space(unsigned short int blocks) {
   int free_space = (int)blocks * sizeof(umm_block) - UMM_OVERHEAD_ADJUST;
-  /*
-   * There are some strange boundary things at play I don't quite follow.
-   * However, these adjustments allow malloc to be called and succeed in
-   * allocating all of the available memory, assuming it is contiguous.
-   */
   return  (free_space > 0) ? (size_t)free_space : 0;
 }
+#endif
 
+#if defined(UMM_STATS) || defined(UMM_STATS_FULL)
 // Keep complete call path in IRAM
 size_t umm_free_heap_size_lw( void ) {
   if (umm_heap == NULL) {
     umm_init();
   }
-#ifdef UMM_INLINE_METRICS
-  return free_blocks_to_free_space(ummHeapInfo.freeBlocks);
-#else
-  return free_blocks_to_free_space(ummStats.free_blocks);
-#endif
+  return UMM_FREE_BLOCKS * sizeof(umm_block);
 }
 #endif
 
@@ -220,11 +215,7 @@ size_t xPortGetFreeHeapSize(void) __attribute__ ((alias("umm_free_heap_size")));
 #if defined(UMM_STATS) || defined(UMM_STATS_FULL)
 void print_stats(int force) {
   DBGLOG_FORCE( force, "umm heap statistics:\n");
-#ifdef UMM_INLINE_METRICS
-  DBGLOG_FORCE( force,   "  Free Space        %5u\n", ummHeapInfo.freeBlocks * sizeof(umm_block));
-#else
-  DBGLOG_FORCE( force,   "  Free Space        %5u\n", ummStats.free_blocks * sizeof(umm_block));
-#endif
+  DBGLOG_FORCE( force,   "  Raw Free Space    %5u\n", UMM_FREE_BLOCKS * sizeof(umm_block));
   DBGLOG_FORCE( force,   "  OOM Count         %5u\n", UMM_OOM_COUNT);
 #if defined(UMM_STATS_FULL)
   DBGLOG_FORCE( force,   "  Low Watermark     %5u\n", ummStats.free_blocks_min * sizeof(umm_block));

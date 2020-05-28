@@ -169,7 +169,7 @@ extern "C" {
 #define UMM_BEST_FIT
 #define UMM_STATS
 // #define UMM_STATS_FULL
-// #define UMM_INLINE_METRICS
+#define UMM_INLINE_METRICS
 
 
 #ifdef UMM_TEST_BUILD
@@ -227,6 +227,7 @@ extern char _heap_start[];
 #ifdef UMM_INLINE_METRICS
     size_t oom_count;
     #define UMM_OOM_COUNT ummHeapInfo.oom_count
+    #define UMM_FREE_BLOCKS ummHeapInfo.freeBlocks
 #endif
     unsigned int maxFreeContiguousBlocks;
   }
@@ -271,6 +272,7 @@ typedef struct UMM_STATISTICS_t {
   unsigned short int free_blocks;
   size_t oom_count;
   #define UMM_OOM_COUNT ummStats.oom_count
+  #define UMM_FREE_BLOCKS ummStats.free_blocks
 #endif
 #ifdef UMM_STATS_FULL
   unsigned short int free_blocks_min;
@@ -291,7 +293,7 @@ extern UMM_STATISTICS ummStats;
 #ifdef UMM_INLINE_METRICS
 #define STATS__FREE_BLOCKS_UPDATE(s) (void)(s)
 #else
-#define STATS__FREE_BLOCKS_UPDATE(s) ummStats.free_blocks += (s)
+#define STATS__FREE_BLOCKS_UPDATE(s) UMM_FREE_BLOCKS += (s)
 #endif
 #define STATS__OOM_UPDATE() UMM_OOM_COUNT += 1
 
@@ -313,31 +315,18 @@ size_t ICACHE_FLASH_ATTR umm_block_size( void );
 size_t umm_get_alloc_overhead(void);
 
 #ifdef UMM_STATS_FULL
-#ifdef UMM_INLINE_METRICS
+
 #define STATS__FREE_BLOCKS_MIN() \
 do { \
-    if (ummHeapInfo.freeBlocks < ummStats.free_blocks_min) \
-        ummStats.free_blocks_min = ummHeapInfo.freeBlocks; \
+    if (UMM_FREE_BLOCKS < ummStats.free_blocks_min) \
+        ummStats.free_blocks_min = UMM_FREE_BLOCKS; \
 } while(false)
 
 #define STATS__FREE_BLOCKS_ISR_MIN() \
 do { \
-    if (ummHeapInfo.freeBlocks < ummStats.free_blocks_isr_min) \
-        ummStats.free_blocks_isr_min = ummHeapInfo.freeBlocks; \
+    if (UMM_FREE_BLOCKS < ummStats.free_blocks_isr_min) \
+        ummStats.free_blocks_isr_min = UMM_FREE_BLOCKS; \
 } while(false)
-#else
-#define STATS__FREE_BLOCKS_MIN() \
-do { \
-    if (ummStats.free_blocks < ummStats.free_blocks_min) \
-        ummStats.free_blocks_min = ummStats.free_blocks; \
-} while(false)
-
-#define STATS__FREE_BLOCKS_ISR_MIN() \
-do { \
-    if (ummStats.free_blocks < ummStats.free_blocks_isr_min) \
-        ummStats.free_blocks_isr_min = ummStats.free_blocks; \
-} while(false)
-#endif
 
 #define STATS__ALLOC_REQUEST(tag, s)  \
 do { \
@@ -367,11 +356,7 @@ static inline size_t ICACHE_FLASH_ATTR umm_free_heap_size_lw_min( void ) {
 }
 
 static inline size_t ICACHE_FLASH_ATTR umm_free_heap_size_min_reset( void ) {
-#ifdef UMM_INLINE_METRICS
-  ummStats.free_blocks_min = ummHeapInfo.freeBlocks;
-#else
-  ummStats.free_blocks_min = ummStats.free_blocks;
-#endif
+  ummStats.free_blocks_min = UMM_FREE_BLOCKS;
   return (size_t)ummStats.free_blocks_min * umm_block_size();
 }
 

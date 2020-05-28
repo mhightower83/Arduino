@@ -266,7 +266,6 @@ void umm_init( void ) {
   /* setup initial blank heap structure */
     UMM_FRAGMENTATION_METRIC_INIT();
 
-//C TODO: integrade into UMM_FRAGMENTATION_METRIC_INIT
     /* init ummStats.free_blocks */
 #if defined(UMM_STATS) || defined(UMM_STATS_FULL)
 #if defined(UMM_STATS_FULL)
