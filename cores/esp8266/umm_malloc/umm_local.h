@@ -51,6 +51,4 @@ int ICACHE_FLASH_ATTR umm_info_safe_printf_P(const char *fmt, ...) __attribute__
 #define UMM_INFO_PRINTF(fmt, ...) umm_info_safe_printf_P(PSTR4(fmt), ##__VA_ARGS__)
 // use PSTR4() instead of PSTR() to ensure 4-bytes alignment in Flash, whatever the default alignment of PSTR_ALIGN
 
-static size_t free_blocks_to_free_space(unsigned short int blocks);
-
 #endif

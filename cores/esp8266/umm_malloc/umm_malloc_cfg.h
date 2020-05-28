@@ -169,7 +169,7 @@ extern "C" {
 #define UMM_BEST_FIT
 #define UMM_STATS
 // #define UMM_STATS_FULL
-#define UMM_INLINE_METRICS
+// #define UMM_INLINE_METRICS
 
 
 #ifdef UMM_TEST_BUILD
@@ -248,6 +248,7 @@ extern char _heap_start[];
   #define umm_usage_metric() (0)
 #endif
 
+extern size_t umm_free_blocks_to_free_space(unsigned short int blocks);
 
 /*
  * For the ESP8266 we want at least UMM_STATS built, so we have an ISR safe
@@ -293,8 +294,9 @@ extern UMM_STATISTICS ummStats;
 #ifdef UMM_INLINE_METRICS
 #define STATS__FREE_BLOCKS_UPDATE(s) (void)(s)
 #else
-#define STATS__FREE_BLOCKS_UPDATE(s) UMM_FREE_BLOCKS += (s)
+#define STATS__FREE_BLOCKS_UPDATE(s) ummStats.free_blocks += (s)
 #endif
+
 #define STATS__OOM_UPDATE() UMM_OOM_COUNT += 1
 
 size_t umm_free_heap_size_lw( void );
@@ -408,6 +410,7 @@ static inline size_t ICACHE_FLASH_ATTR umm_get_free_null_count( void ) {
 #define STATS__NULL_FREE_REQUEST(tag)     (void)0
 #define STATS__FREE_REQUEST(tag)          (void)0
 #endif
+
 
 /*
   Per Devyte, the core currently doesn't support masking a specific interrupt

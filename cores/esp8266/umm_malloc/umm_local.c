@@ -184,7 +184,7 @@ UMM_STATISTICS ummStats;
 // The value returned is adjusted down by the required overhead, to allow for a
 // successful malloc of 100% of free memory, with the assumption that the
 // available memory is contiguous.
-static size_t free_blocks_to_free_space(unsigned short int blocks) {
+size_t umm_free_blocks_to_free_space(unsigned short int blocks) {
   int free_space = (int)blocks * sizeof(umm_block) - UMM_OVERHEAD_ADJUST;
   return  (free_space > 0) ? (size_t)free_space : 0;
 }
