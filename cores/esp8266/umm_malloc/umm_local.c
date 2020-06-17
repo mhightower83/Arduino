@@ -15,7 +15,7 @@ UMM_TIME_STATS time_stats = {
 #ifdef UMM_INFO
     {0xFFFFFFFF, 0U, 0U, 0U},
 #endif
-#ifdef UMM_POISON_CHECK
+#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
     {0xFFFFFFFF, 0U, 0U, 0U},
 #endif
 #ifdef UMM_INTEGRITY_CHECK
@@ -92,33 +92,39 @@ static void *get_unpoisoned_check_neighbors( void *vptr, const char* file, int l
 
     ptr -= (sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE);
 
-#if defined(UMM_POISON_CHECK_LITE)
-    UMM_CRITICAL_DECL(id_poison);
-    uint16_t c;
-    bool poison = false;
+    uintptr_t c;     // Need more precision to hold underflow/overflow fail case
 
     /* Figure out which block we're in. Note the use of truncated division... */
     c = (ptr - (uintptr_t)(&(umm_heap[0])))/sizeof(umm_block);
 
-    UMM_CRITICAL_ENTRY(id_poison);
-    poison = check_poison_block(&UMM_BLOCK(c)) && check_poison_neighbors(c);
-    UMM_CRITICAL_EXIT(id_poison);
+    // Validate ptr could be an umm_malloc allocation. umm_blocks are 8 byte
+    // aligned. A data pointer will be at an offset of 4 bytes once the
+    // UMM_POISON overhead is removed.
+    // Verify that block index is within a valid allocation range.
+    bool valid = ! (4 != (ptr & 7) || (0U == c || (uintptr_t)UMM_BLOCK_LAST <= c));
 
-    if (!poison) {
+#if defined(UMM_POISON_CHECK_LITE)
+    if (valid) {
+      UMM_CRITICAL_DECL(id_poison);
+      UMM_CRITICAL_ENTRY(id_poison);
+      valid = check_poison_block(&UMM_BLOCK((uint16_t)c)) && check_poison_neighbors((uint16_t)c);
+      UMM_CRITICAL_EXIT(id_poison);
+    }
+
+#else
+    /*
+     *  No need to check poison here. POISON_CHECK() has already done a
+     *  full heap check.
+     */
+#endif
+
+    if (!valid) {
       if (file) {
         __panic_func(file, line, "");
       } else {
         abort();
       }
     }
-#else
-    /*
-     *  No need to check poison here. POISON_CHECK() has already done a
-     *  full heap check.
-     */
-    (void)file;
-    (void)line;
-#endif
   }
 
   return (void *)ptr;

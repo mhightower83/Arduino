@@ -69,7 +69,7 @@ static bool check_poison( const void *ptr, size_t poison_size,
  * blocks.
  */
 static bool check_poison_block( umm_block *pblock ) {
-  int ok = true;
+  bool ok = true;
 
   if (pblock->header.used.next & UMM_FREELIST_MASK) {
     DBGLOG_ERROR( "check_poison_block is called for free block 0x%lx\n", (unsigned long)pblock);
@@ -133,14 +133,22 @@ static void *get_unpoisoned( void *vptr ) {
    uintptr_t ptr = (uintptr_t)vptr;
 
   if (ptr != 0) {
-    uint16_t c;
+    uintptr_t c;     // Need more precision to hold underflow/overflow fail case
 
     ptr -= (sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE);
 
     /* Figure out which block we're in. Note the use of truncated division... */
     c = (ptr - (uintptr_t)(&(umm_heap[0])))/sizeof(umm_block);
 
-    check_poison_block(&UMM_BLOCK(c));
+    // Validate ptr could be an umm_malloc allocation. umm_blocks are 8 byte
+    // aligned. A data pointer will be at an offset of 4 bytes once the
+    // UMM_POISON overhead is removed.
+    // Verify that block index is within a valid allocation range.
+    if (4 != (ptr & 7) || (0U == c || (uintptr_t)UMM_BLOCK_LAST <= c)) {
+      abort();
+    }
+
+    check_poison_block(&UMM_BLOCK((uint16_t)c));
   }
 
   return (void *)ptr;
