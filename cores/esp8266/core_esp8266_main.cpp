@@ -392,6 +392,7 @@ extern "C" void __disableWiFiAtBootTime (void)
     wifi_fpm_open();
     wifi_fpm_do_sleep(0xFFFFFFF);
 }
+extern "C" void postmortem_init(void);
 
 extern "C" void user_init(void) {
     struct rst_info *rtc_info_ptr = system_get_rst_info();
@@ -422,6 +423,11 @@ extern "C" void user_init(void) {
 #if defined(MMU_IRAM_HEAP)
     umm_init_iram();
 #endif
+
+#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_EXCEPTIONS)
+    postmortem_init();
+#endif
+
     preinit(); // Prior to C++ Dynamic Init (not related to above init() ). Meant to be user redefinable.
     __disableWiFiAtBootTime(); // default weak function disables WiFi
 
