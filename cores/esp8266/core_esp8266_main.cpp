@@ -424,12 +424,12 @@ extern "C" void user_init(void) {
     umm_init_iram();
 #endif
 
+    preinit(); // Prior to C++ Dynamic Init (not related to above init() ). Meant to be user redefinable.
+    __disableWiFiAtBootTime(); // default weak function disables WiFi
+
 #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_EXCEPTIONS)
     postmortem_init();
 #endif
-
-    preinit(); // Prior to C++ Dynamic Init (not related to above init() ). Meant to be user redefinable.
-    __disableWiFiAtBootTime(); // default weak function disables WiFi
 
     ets_task(loop_task,
         LOOP_TASK_PRIORITY, s_loop_queue,
