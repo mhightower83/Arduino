@@ -240,6 +240,7 @@ extern fn_c_exception_handler_t _xtos_c_handler_table[XCHAL_EXCCAUSE_NUM];
 */
 extern fn_c_exception_handler_t _xtos_set_exception_handler(int cause, fn_c_exception_handler_t fn);
 #endif
+typedef _xtos_handler_func *_xtos_handler;
 
 extern uint32_t Wait_SPI_Idle(SpiFlashChip *fc);
 extern void Cache_Read_Disable();
