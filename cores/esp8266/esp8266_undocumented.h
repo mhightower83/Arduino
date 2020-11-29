@@ -27,6 +27,11 @@ extern void (*user_start_fptr)();
 #define XCHAL_EXCCAUSE_NUM  		64
 #endif
 
+#ifndef XCHAL_EXCCAUSE_NUM
+// from tools/xtensa-lx106-elf/include/xtensa/config/core.h:629:#define XCHAL_EXCCAUSE_NUM             64
+#define XCHAL_EXCCAUSE_NUM             64
+#endif
+
 // ROM
 
 extern void rom_i2c_writeReg_Mask(int, int, int, int, int, int);
