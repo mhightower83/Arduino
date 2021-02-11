@@ -30,8 +30,9 @@ fmodeb = { 'dout': 3, 'dio': 2, 'qout': 1, 'qio': 0 }
 ffreqb = { '40': 0, '26': 1, '20': 2, '80': 15 }
 fsizeb = { '512K': 0, '256K': 1, '1M': 2, '2M': 3, '4M': 4, '8M': 8, '16M': 9 }
 
-crcsize_offset = 4096 + 16
-crcval_offset =  4096 + 16 + 4
+eboot_size = 4096
+crcsize_offset = eboot_size + 16
+crcval_offset =  eboot_size + 16 + 4
 
 def get_elf_entry(elf, path):
     p = subprocess.Popen([path + "/xtensa-lx106-elf-readelf", '-h', elf], stdout=subprocess.PIPE, universal_newlines=True )
@@ -71,10 +72,41 @@ def write_bin(out, args, elf, segments, to_addr):
     out.write(bytearray(header))
     total_size = 8
     checksum = 0xef
+    seg_count = 0
     for segment in segments:
         [size, addr] = get_segment_size_addr(elf, segment, args.path)
+        #
+        # Different handling for multiple segments within eboot code. The Boot
+        # ROM loader has additional aligments and segment length requirements.
+        #
+        # *) The segment size must include the length of the CS and padding,
+        #    such that when added to the current header position, we are
+        #    positioned at the start of the next segment header.
+        #
+        # *) Unless this is the last segment, then it is just the real size of
+        #    this segment.  You still pad out and write the CS as always.
+        #
+        # *) CS is intialized to 0xEF for the 1st segment, each additional
+        #    segment starts with a CS of 0x00.
+        #
+        # *) Segment order matters in the `segments` list object. Since a
+        #    segment's length is increased for padding, care must be taken
+        #    such that adjacent segments are in order. Otherwise when the next
+        #    segment in the bin is loaded, it could overwrite the previously
+        #    loaded.
+        #
+        # I could not find this documented. This is method is based on empirical
+        # evidence. It resolves the non-fatal CS error with truncated printing
+        # in the boot message. There may be other ways to get CS to pass. For
+        # now, this one works.
+        #
+        sz_a16 = size;
+        seg_count += 1
+        if to_addr != 0 and len(segments) !=  seg_count:
+            sz_a16 = ((total_size + 8 + size + 1 + 15) & ~15) - (total_size + 8)
         seghdr = [ addr & 255, (addr>>8) & 255, (addr>>16) & 255, (addr>>24) & 255,
-                   size & 255, (size>>8) & 255, (size>>16) & 255, (size>>24) & 255]
+                   sz_a16 & 255, (sz_a16>>8) & 255, (sz_a16>>16) & 255, (sz_a16>>24) & 255]
+
         out.write(bytearray(seghdr));
         total_size += 8;
         raw = read_segment(elf, segment, args.path)
@@ -88,12 +120,26 @@ def write_bin(out, args, elf, segments, to_addr):
         except Exception:
             for data in raw:
                 checksum = checksum ^ data
-    total_size += 1
-    while total_size & 15:
+
+        # Handle multi-segments within eboot code
+        if to_addr != 0:
+            total_size += 1
+            while total_size & 15:
+                total_size += 1
+                out.write(bytearray([0]))
+            out.write(bytearray([checksum]))
+            # The checksum's initial start value of 0xEF is only for the first
+            # segment, connected to the image_header. All other segments start with
+            # a value of 0. (This is based on empirical evidence.)
+            checksum = 0
+
+    if to_addr == 0:
         total_size += 1
-        out.write(bytearray([0]))
-    out.write(bytearray([checksum]))
-    if to_addr != 0:
+        while total_size & 15:
+            total_size += 1
+            out.write(bytearray([0]))
+        out.write(bytearray([checksum]))
+    else:
         if total_size + 8 > to_addr:
             raise Exception('Bin image of ' + elf + ' is too big, actual size ' + str(total_size  + 8) + ', target size ' + str(to_addr) + '.')
         while total_size < to_addr:
@@ -189,7 +235,7 @@ def main():
         wrapper(
             elf=args.eboot,
             segments=[".text", ".rodata"],
-            to_addr=4096
+            to_addr=eboot_size
         )
 
         wrapper(
