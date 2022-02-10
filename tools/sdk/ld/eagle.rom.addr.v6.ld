@@ -82,6 +82,7 @@ PROVIDE ( _xtos_return_from_exc = 0x4000dc54 );
 
 /* Added to support replacing the ROM _xtos_c_wrapper_handler */
 PROVIDE ( _xtos_c_handler_table = 0x3fffc100 );
+/* Added to support replacing the ROM _xtos_unhandled_exception */
 PROVIDE ( _xtos_exc_handler_table = 0x3fffc000 );
 
 PROVIDE ( _xtos_set_exception_handler = 0x40000454 );

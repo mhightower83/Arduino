@@ -397,6 +397,7 @@ extern "C" void __disableWiFiAtBootTime (void)
     wifi_fpm_open();
     wifi_fpm_do_sleep(0xFFFFFFF);
 }
+extern "C" void postmortem_init(void);
 
 #if FLASH_MAP_SUPPORT
 #include "flash_hal.h"
@@ -438,6 +439,10 @@ extern "C" void user_init(void) {
 #endif
     preinit(); // Prior to C++ Dynamic Init (not related to above init() ). Meant to be user redefinable.
     __disableWiFiAtBootTime(); // default weak function disables WiFi
+
+#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_EXCEPTIONS)
+    postmortem_init();
+#endif
 
     ets_task(loop_task,
         LOOP_TASK_PRIORITY, s_loop_queue,
