@@ -11,6 +11,7 @@ extern "C" {
 
 enum action_t {
     ACTION_COPY_RAW = 0x00000001,
+    ACTION_CONFIG_ERASE = 0x00000002,
     ACTION_LOAD_APP = 0xffffffff
 };
 

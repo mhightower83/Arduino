@@ -4,6 +4,8 @@
 #include <PolledTimeout.h>
 #include "StackThunk.h"
 
+#include <erase_config.h>
+
 //#define DEBUG_UPDATER Serial
 
 #include <Updater_Signing.h>
@@ -62,6 +64,7 @@ void UpdaterClass::_reset() {
 }
 
 bool UpdaterClass::begin(size_t size, int command, int ledPin, uint8_t ledOn) {
+
   if(_size > 0){
 #ifdef DEBUG_UPDATER
     DEBUG_UPDATER.println(F("[begin] already running"));
@@ -82,7 +85,7 @@ bool UpdaterClass::begin(size_t size, int command, int ledPin, uint8_t ledOn) {
     _setError(UPDATE_ERROR_BOOTSTRAP);
     return false;
   }
-  
+
 #ifdef DEBUG_UPDATER
   if (command == U_FS) {
     DEBUG_UPDATER.println(F("[begin] Update Filesystem."));
@@ -129,7 +132,7 @@ bool UpdaterClass::begin(size_t size, int command, int ledPin, uint8_t ledOn) {
 
     //make sure that the size of both sketches is less than the total space (updateEndAddress)
     if(updateStartAddress < currentSketchSize) {
-      _setError(UPDATE_ERROR_SPACE);    
+      _setError(UPDATE_ERROR_SPACE);
       return false;
     }
   }
@@ -298,10 +301,12 @@ bool UpdaterClass::end(bool evenIfRemaining){
 
   if (_command == U_FLASH) {
     eboot_command ebcmd;
+    memset(&ebcmd, 0, sizeof(ebcmd));
     ebcmd.action = ACTION_COPY_RAW;
     ebcmd.args[0] = _startAddress;
     ebcmd.args[1] = 0x00000;
     ebcmd.args[2] = _size;
+    ebcmd.args[3] =  _eraseConfigOption;
     eboot_command_write(&ebcmd);
 
 #ifdef DEBUG_UPDATER
@@ -311,6 +316,7 @@ bool UpdaterClass::end(bool evenIfRemaining){
   else if (_command == U_FS) {
 #ifdef ATOMIC_FS_UPDATE
     eboot_command ebcmd;
+    memset(&ebcmd, 0, sizeof(ebcmd));
     ebcmd.action = ACTION_COPY_RAW;
     ebcmd.args[0] = _startAddress;
     ebcmd.args[1] = FS_start - 0x40200000;
@@ -359,7 +365,7 @@ bool UpdaterClass::_writeBuffer(){
       modifyFlashMode = true;
     }
   }
-  
+
   if (eraseResult) {
     if(!_async) yield();
     writeResult = ESP.flashWrite(_currentAddress, _buffer, _bufferLen);
@@ -443,7 +449,7 @@ bool UpdaterClass::_verifyEnd() {
         uint8_t buf[4] __attribute__((aligned(4)));
         if(!ESP.flashRead(_startAddress, (uint32_t *) &buf[0], 4)) {
             _currentAddress = (_startAddress);
-            _setError(UPDATE_ERROR_READ);            
+            _setError(UPDATE_ERROR_READ);
             return false;
         }
 
@@ -455,7 +461,7 @@ bool UpdaterClass::_verifyEnd() {
             return true;
         } else if (buf[0] != 0xE9) {
             _currentAddress = (_startAddress);
-            _setError(UPDATE_ERROR_MAGIC_BYTE);            
+            _setError(UPDATE_ERROR_MAGIC_BYTE);
             return false;
         }
 
@@ -467,7 +473,7 @@ bool UpdaterClass::_verifyEnd() {
         // check if new bin fits to SPI flash
         if(bin_flash_size > ESP.getFlashChipRealSize()) {
             _currentAddress = (_startAddress);
-            _setError(UPDATE_ERROR_NEW_FLASH_CONFIG);            
+            _setError(UPDATE_ERROR_NEW_FLASH_CONFIG);
             return false;
         }
 #endif
