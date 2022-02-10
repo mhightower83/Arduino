@@ -259,9 +259,16 @@ int main()
         ets_printf("%d\n", res);
 #endif	    
         if (res == 0) {
-            cmd.action = ACTION_LOAD_APP;
-            cmd.args[0] = cmd.args[1];
+            cmd.action = ACTION_CONFIG_ERASE;
+            cmd.args[0] = cmd.args[3];  // This requires Update.cpp to zero this field.
         }
+    }
+    if (cmd.action == ACTION_CONFIG_ERASE) {
+        ets_wdt_disable();
+        do_erase_flash_option(cmd.args[0]);
+        ets_wdt_enable();
+        cmd.action = ACTION_LOAD_APP;
+        cmd.args[0] = 0; //?? previously above ACTION_COPY_RAW would have used cmd.args[1]; which is 0
     }
 
     if (clear_cmd) {
