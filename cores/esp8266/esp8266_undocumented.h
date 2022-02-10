@@ -27,11 +27,6 @@ extern void (*user_start_fptr)();
 #define XCHAL_EXCCAUSE_NUM  		64
 #endif
 
-#ifndef XCHAL_EXCCAUSE_NUM
-// from tools/xtensa-lx106-elf/include/xtensa/config/core.h:629:#define XCHAL_EXCCAUSE_NUM             64
-#define XCHAL_EXCCAUSE_NUM             64
-#endif
-
 // ROM
 
 extern void rom_i2c_writeReg_Mask(int, int, int, int, int, int);
@@ -247,7 +242,6 @@ extern fn_c_exception_handler_t _xtos_c_handler_table[XCHAL_EXCCAUSE_NUM];
 */
 extern fn_c_exception_handler_t _xtos_set_exception_handler(int cause, fn_c_exception_handler_t fn);
 #endif
-typedef _xtos_handler_func *_xtos_handler;
 
 extern uint32_t Wait_SPI_Idle(SpiFlashChip *fc);
 extern void Cache_Read_Disable();
