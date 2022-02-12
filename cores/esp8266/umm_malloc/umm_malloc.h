@@ -27,7 +27,11 @@ extern void umm_init_iram_ex(void *addr, unsigned int size, bool zero);
 #endif
 /* ------------------------------------------------------------------------ */
 
+// umm_init_heap is new in the upstream version. This is similar to what we are
+// doing with umm_init_common and umm_init_stage_2.
+// extern void  umm_init_heap(void *ptr, size_t size);
 extern void  umm_init(void);
+
 extern void *umm_malloc(size_t size);
 extern void *umm_calloc(size_t num, size_t size);
 extern void *umm_realloc(void *ptr, size_t size);

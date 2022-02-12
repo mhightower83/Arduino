@@ -138,6 +138,9 @@ enum rst_reason_sw
 };
 static int s_user_reset_reason = REASON_DEFAULT_RST;
 
+// If guilty of abort calll, prints umm_malloc crash report.
+extern void umm_postmortem_report(void (*fn_printf)(const char *fmt, ...));
+
 // From UMM, the last caller of a malloc/realloc/calloc which failed:
 extern void *umm_last_fail_alloc_addr;
 extern int umm_last_fail_alloc_size;
@@ -374,6 +377,10 @@ void __wrap_system_restart_local() {
         // idf-monitor.py will be able to decode this one and show exact location in sources
         ets_printf_P(PSTR("\nlast failed alloc caller: 0x%08x\n"), (uint32_t)umm_last_fail_alloc_addr);
     }
+
+    #if (UMM_POINTER_CHECK != 0)
+    umm_postmortem_report(ets_printf_P);
+    #endif
 
     custom_crash_callback( &rst_info, sp_dump + offset, stack_end );
 

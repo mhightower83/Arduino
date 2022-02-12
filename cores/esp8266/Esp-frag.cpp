@@ -28,20 +28,7 @@ void EspClass::getHeapStats(uint32_t* hfree, uint32_t* hmax, uint8_t* hfrag)
     // L2 / Euclidean norm of free block sizes.
     // Having getFreeHeap()=sum(hole-size), fragmentation is given by
     // 100 * (1 - sqrt(sum(hole-size²)) / sum(hole-size))
-    umm_info(NULL, false);
-
-    uint32_t free_size = umm_free_heap_size_core(umm_get_current_heap());
-    if (hfree)
-        *hfree = free_size;
-    if (hmax)
-        *hmax = umm_max_block_size_core(umm_get_current_heap());
-    if (hfrag) {
-      if (free_size) {
-        *hfrag = umm_fragmentation_metric_core(umm_get_current_heap());
-      } else {
-        *hfrag = 0;
-      }
-    }
+    umm_get_heap_stats(hfree, hmax, hfrag);
 }
 
 void EspClass::getHeapStats(uint32_t* hfree, uint16_t* hmax, uint8_t* hfrag)
