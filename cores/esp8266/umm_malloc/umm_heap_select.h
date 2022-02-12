@@ -106,4 +106,30 @@ size_t _heap_id;
 #endif
 };
 
+class HeapSelectExternal {
+public:
+#ifdef UMM_HEAP_EXTERNAL
+MAYBE_ALWAYS_INLINE
+HeapSelectExternal() : _heap_id(umm_get_current_heap_id()) {
+    umm_set_heap_by_id(UMM_HEAP_EXTERNAL);
+}
+
+MAYBE_ALWAYS_INLINE
+~HeapSelectExternal() {
+    umm_set_heap_by_id(_heap_id);
+}
+
+protected:
+size_t _heap_id;
+
+#else // UMM_HEAP_EXTERNAL
+MAYBE_ALWAYS_INLINE
+HeapSelectExternal() {
+}
+MAYBE_ALWAYS_INLINE
+~HeapSelectExternal() {
+}
+#endif // UMM_HEAP_EXTERNAL
+};
+
 #endif // UMM_MALLOC_SELECT_H

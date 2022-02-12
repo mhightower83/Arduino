@@ -32,6 +32,8 @@
  * R.Hempel 2020-01-12 - Use explicitly sized values from stdint.h - See Issue 15
  * R.Hempel 2020-01-20 - Move metric functions back to umm_info - See Issue 29
  * R.Hempel 2020-02-01 - Macro functions are uppercased - See Issue 34
+ * R.Hempel 2020-06-20 - Support alternate body size - See Issue 42
+ * R.Hempel 2021-05-02 - Support explicit memory umm_init_heap() - See Issue 53
  * ----------------------------------------------------------------------------
  */
 
@@ -54,24 +56,24 @@ extern "C" {
 #include <stddef.h>
 #include <string.h>
 
-#include "umm_malloc_cfg.h"   /* user-dependent */
+#include "umm_malloc_cfg.h"   // Override with umm_malloc_cfg_xxx.h
 #include "umm_malloc.h"
 
 /* Use the default DBGLOG_LEVEL and DBGLOG_FUNCTION */
+// Defines for DBGLOG_ENABLE and DBGLOG_LEVEL are in umm_malloc_cfgport.h
+// #define DBGLOG_ENABLE
+// #define DBGLOG_LEVEL 0
 
-#ifndef DBGLOG_LEVEL
-#define DBGLOG_LEVEL 0
+#ifdef DBGLOG_ENABLE
+    #include "dbglog/dbglog.h"
 #endif
-
-#include "dbglog/dbglog.h"
 
 /*
  * These variables are used in upstream umm_malloc for initializing the heap.
  * Our port initialization is different and does not use them at this time.
 extern void *UMM_MALLOC_CFG_HEAP_ADDR;
 extern uint32_t UMM_MALLOC_CFG_HEAP_SIZE;
- */
-/*
+ *
  * In our port, we leave UMM_CHECK_INITIALIZED unset. Since we initialize the
  * heap before CRT0 init has run, commonly used testing methods for heap init
  * may not work. Not using UMM_CHECK_INITIALIZED saves about 104 bytes of IRAM.
@@ -84,7 +86,21 @@ extern uint32_t UMM_MALLOC_CFG_HEAP_SIZE;
  * CRT0 init.
  */
 
-#include "umm_local.h"      // target-dependent supplemental
+#if 0 // Must be zero at release
+#warning "Macro NON_NULL_CONTEXT_ASSERT() is active!"
+/*
+ * Keep for future debug/maintenance of umm_malloc. Not needed in a
+ * regular/debug build. Call paths that use NON_NULL_CONTEXT_ASSERT logically
+ * guard against returning NULL. This macro double-checks that assumption during
+ * development.
+ */
+#define NON_NULL_CONTEXT_ASSERT() assert((NULL != _context))
+#else
+#define NON_NULL_CONTEXT_ASSERT() (void)0
+#endif
+
+// Various port related enhancements. Keep this file private to umm_malloc.
+#include "umm_local.h"
 
 /* ------------------------------------------------------------------------- */
 
@@ -99,7 +115,7 @@ UMM_H_ATTPACKPRE typedef struct umm_block_t {
     } header;
     union {
         umm_ptr free;
-        uint8_t data[4];
+        uint8_t data[UMM_BLOCK_BODY_SIZE - sizeof(struct umm_ptr_t)];
     } body;
 } UMM_H_ATTPACKSUF umm_block;
 
@@ -107,6 +123,37 @@ UMM_H_ATTPACKPRE typedef struct umm_block_t {
 #define UMM_BLOCKNO_MASK  ((uint16_t)(0x7FFF))
 
 /* ------------------------------------------------------------------------- */
+// Our old struct UMM_HEAP_CONTEXT was similar to upstream's struct umm_heap_config
+// Update umm_heap_config with our enhancements.
+// Reordered structure members for smaller IRAM, IROM usage
+struct umm_heap_config {
+    umm_block *pheap;
+    uint32_t numblocks; // use uint32_t saves 4 bytes IRAM vs uint16_t in upstream
+    void *pheap_end;
+    #if (!defined(UMM_INLINE_METRICS) && (UMM_STATS > 0)) || (UMM_STATS > 1)
+    UMM_STATISTICS stats;
+    #endif
+    #ifdef UMM_INFO
+    UMM_HEAP_INFO info;
+    #endif
+    size_t heap_size;
+    unsigned char id;
+};
+// struct umm_heap_config umm_heaps[UMM_NUM_HEAPS];
+
+#define UMM_HEAP       (_context->pheap)
+#define UMM_HEAPSIZE   (_context->heap_size)
+#define UMM_NUMBLOCKS  (_context->numblocks)
+
+#define UMM_BLOCKSIZE  (sizeof(umm_block))
+#define UMM_BLOCK_LAST (UMM_NUMBLOCKS - 1)
+
+///////////////////////////////////////////////////////////////////////////////
+//
+// This block is only in our port focuses on supporting multiple heap
+// selections.
+//
+
 umm_heap_context_t heap_context[UMM_NUM_HEAPS] __attribute__((section(".noinit")));
 // void *umm_heap = NULL;
 
@@ -161,7 +208,7 @@ static umm_heap_context_t *umm_get_heap_by_id(size_t which) {
 
 umm_heap_context_t *umm_set_heap_by_id(size_t which) {
     umm_heap_context_t *_context = umm_get_heap_by_id(which);
-    if (_context && _context->heap) {
+    if (_context && _context->pheap) {
         umm_heap_cur = which;
         return _context;
     }
@@ -213,39 +260,59 @@ int umm_get_heap_stack_index(void) {
  * realloc or free since you may not be in the right heap to handle it.
  *
  */
-static bool test_ptr_context(size_t which, void *ptr) {
-    return
-        heap_context[which].heap &&
-        ptr >= (void *)heap_context[which].heap &&
-        ptr < heap_context[which].heap_end;
-}
+ static bool test_ptr_context(const size_t which, const void *const ptr) {
+     return
+         heap_context[which].pheap &&
+         ptr >= (void *)heap_context[which].pheap &&
+         ptr < heap_context[which].pheap_end;
+ }
 
-static umm_heap_context_t *umm_get_ptr_context(void *ptr) {
-    for (size_t i = 0; i < UMM_NUM_HEAPS; i++) {
-        if (test_ptr_context(i, ptr)) {
-            return umm_get_heap_by_id(i);
-        }
-    }
+ /*
+  * Find Heap context by allocation address - may return NULL
+  */
+ IRAM_ATTR
+ static umm_heap_context_t *_umm_get_ptr_context(const void *const ptr) {
+     for (size_t i = 0; i < UMM_NUM_HEAPS; i++) {
+         if (test_ptr_context(i, ptr)) {
+             return umm_get_heap_by_id(i);
+         }
+     }
 
-    panic();
-    return NULL;
-}
+     return NULL;
+ }
 
-#define UMM_NUMBLOCKS (_context->numblocks)
-#define UMM_BLOCK_LAST (UMM_NUMBLOCKS - 1)
+ /*
+  * Find Heap context by allocation address - must either succeed or abort
+  */
+ static umm_heap_context_t *umm_get_ptr_context(const void *const ptr) {
+     #if (UMM_POINTER_CHECK == 1)
+     return umm_data_ptr_integrity_check(ptr); // returns _context or aborts
+     #else
+     umm_heap_context_t *const _context = _umm_get_ptr_context(ptr);
+     if (_context) {
+         return _context;
+     }
+
+     abort();
+     return NULL;
+     #endif
+ }
+
+//
+//
+///////////////////////////////////////////////////////////////////////////////
+
 
 /* -------------------------------------------------------------------------
  * These macros evaluate to the address of the block and data respectively
  */
 
-#define UMM_BLOCK(b)  (_context->heap[b])
+#define UMM_BLOCK(b)  (UMM_HEAP[b])
 #define UMM_DATA(b)   (UMM_BLOCK(b).body.data)
 
 /* -------------------------------------------------------------------------
  * These macros evaluate to the index of the block - NOT the address!!!
  */
-
-/* ------------------------------------------------------------------------ */
 
 #define UMM_NBLOCK(b) (UMM_BLOCK(b).header.used.next)
 #define UMM_PBLOCK(b) (UMM_BLOCK(b).header.used.prev)
@@ -263,7 +330,7 @@ static umm_heap_context_t *umm_get_ptr_context(void *ptr) {
 #include "umm_integrity.c"
 #include "umm_poison.c"
 #include "umm_info.c"
-#include "umm_local.c"      // target-dependent supplemental features
+#include "umm_local.c"      // add our port specific supplemental features
 
 /* ------------------------------------------------------------------------ */
 
@@ -322,7 +389,7 @@ static uint16_t umm_blocks(size_t size) {
      *    13          9                          1      3
      */
 
-    size_t blocks = (2 + ((size - 1) / sizeof(umm_block)));
+    size_t blocks = (2 + ((size - 1) / (UMM_BLOCKSIZE)));
 
     if (blocks > (INT16_MAX)) {
         blocks = INT16_MAX;
@@ -426,6 +493,7 @@ static uint16_t umm_assimilate_down(umm_heap_context_t *_context, uint16_t c, ui
 }
 
 /* ------------------------------------------------------------------------- */
+
 #undef ICACHE_MAYBE
 #ifdef UMM_INIT_USE_IRAM
 // umm_init(), ... stays in IRAM
@@ -434,6 +502,7 @@ static uint16_t umm_assimilate_down(umm_heap_context_t *_context, uint16_t c, ui
 // Freeup IRAM
 #define ICACHE_MAYBE ICACHE_FLASH_ATTR
 #endif
+
 /*
  * In this port, we split the upstream version of umm_init_heap() into two
  * parts: _umm_init_heap and umm_init_heap. Then add multiple heap support.
@@ -443,12 +512,14 @@ static void ICACHE_MAYBE _umm_init_heap(umm_heap_context_t *_context) {
     UMM_FRAGMENTATION_METRIC_INIT();
 
     /* init stats.free_blocks */
-    #if defined(UMM_STATS_FULL)
-    _context->stats.free_blocks_min = UMM_NUMBLOCKS - 2;
-    _context->stats.free_blocks_isr_min = UMM_NUMBLOCKS - 2;
-    #endif
-    #if (defined(UMM_STATS) || defined(UMM_STATS_FULL)) && !defined(UMM_INLINE_METRICS)
+    #if (UMM_STATS > 0) && !defined(UMM_INLINE_METRICS)
     _context->stats.free_blocks = UMM_NUMBLOCKS - 2;
+    #endif
+    #if (UMM_STATS > 1)
+    _context->stats.free_blocks_min = UMM_NUMBLOCKS - 2;
+    #endif
+    #if (UMM_STATS >= 10) // UMM_STATS_FULL
+    _context->stats.free_blocks_isr_min = UMM_NUMBLOCKS - 2;
     #endif
 
     /* Set up umm_block[0], which just points to umm_block[1] */
@@ -486,27 +557,46 @@ static void ICACHE_MAYBE _umm_init_heap(umm_heap_context_t *_context) {
      */
 
     UMM_PBLOCK(UMM_BLOCK_LAST) = 1;
+
+// DBGLOG_FORCE(true, "nblock(0) %04x pblock(0) %04x nfree(0) %04x pfree(0) %04x\n", UMM_NBLOCK(0) & UMM_BLOCKNO_MASK, UMM_PBLOCK(0), UMM_NFREE(0), UMM_PFREE(0));
+// DBGLOG_FORCE(true, "nblock(1) %04x pblock(1) %04x nfree(1) %04x pfree(1) %04x\n", UMM_NBLOCK(1) & UMM_BLOCKNO_MASK, UMM_PBLOCK(1), UMM_NFREE(1), UMM_PFREE(1));
+
 }
 
+#define UMM_MAX_NUMBLOCKS (32 * 1024)
 void ICACHE_MAYBE umm_init_heap(size_t id, void *start_addr, size_t size, bool full_init) {
     /* Check for bad values and block duplicate init attempts. */
     umm_heap_context_t *_context = umm_get_heap_by_id(id);
-    if (NULL == start_addr || NULL == _context || _context->heap) {
+    if (NULL == start_addr || NULL == _context || _context->pheap) {
         return;
     }
+
+    size_t numblocks = size / UMM_BLOCK_BODY_SIZE;
+    // For now, rely on static assert in void install_vm_exception_handler()
+    #if defined(MMU_EXTERNAL_HEAP) && ((UMM_MAX_NUMBLOCKS * UMM_BLOCK_BODY_SIZE) < (MMU_EXTERNAL_HEAP * 1024))
+    // Help keep IRAM use small. Only build when there is a chance of numblocks
+    // being larger than UMM_MAX_NUMBLOCKS.
+    if (UMM_MAX_NUMBLOCKS < numblocks) {
+        // Clip off excess memory
+        numblocks = UMM_MAX_NUMBLOCKS;
+    }
+    #endif
+    const size_t heap_size = numblocks * UMM_BLOCK_BODY_SIZE;
 
     /* init heap pointer and size, and memset it to 0 */
 
     _context->id = id;
-    _context->heap = (umm_block *)start_addr;
-    _context->heap_end = (void *)((uintptr_t)start_addr + size);
-    _context->numblocks = (size / sizeof(umm_block));
+    _context->heap_size = heap_size;  // New in upstream
+    _context->pheap = (umm_block *)start_addr;
+    _context->pheap_end = (void *)((uintptr_t)start_addr + heap_size);
+    _context->numblocks = numblocks;  // due to umm_malloc architecture this will not exceed 32K
 
-    // An option for blocking the zeroing of extra heaps. This allows for
-    // post-crash debugging after reboot.
+    // An option for blocking the zeroing of extra heaps allows for the
+    // opertunity to performing post-crash debugging.
     if (full_init) {
-        memset(_context->heap, 0x00, size);
-        #if (!defined(UMM_INLINE_METRICS) && defined(UMM_STATS)) || defined(UMM_STATS_FULL)
+        memset(_context->pheap, 0x00, heap_size);
+
+        #if (!defined(UMM_INLINE_METRICS) && (UMM_STATS > 0)) || (UMM_STATS > 1)
         memset(&_context->stats, 0x00, sizeof(_context->stats));
         #endif
 
@@ -524,7 +614,7 @@ void ICACHE_MAYBE umm_init(void) {
 
     // Assume no "C" runtime zero init
     for (size_t i = 0; i < UMM_NUM_HEAPS; i++) {
-        heap_context[i].heap = NULL;
+        heap_context[i].pheap = NULL;
     }
     memset(&heap_context[0], 0, sizeof(heap_context));
     // Note, full_init must be true for the primary heap, DRAM.
@@ -536,9 +626,10 @@ void ICACHE_MAYBE umm_init(void) {
 }
 
 /*
- * Only the Internal DRAM init, needs (or maybe not) to be called from IRAM.
+ * Only the Internal DRAM init, (or maybe not) needs to be called from IRAM
  * umm_init_iram and umm_init_vm are called from user_init() after the SDK has
  * inited and ICACHE has been enabled.
+ *
  */
 #ifdef UMM_HEAP_IRAM
 void ICACHE_FLASH_ATTR umm_init_iram_ex(void *addr, unsigned int size, bool full_init) {
@@ -579,10 +670,7 @@ static void umm_free_core(umm_heap_context_t *_context, void *ptr) {
 
     uint16_t c;
 
-    if (NULL == _context) {
-        panic();
-        return;
-    }
+    NON_NULL_CONTEXT_ASSERT();
 
     STATS__FREE_REQUEST(id_free);
     /*
@@ -596,7 +684,7 @@ static void umm_free_core(umm_heap_context_t *_context, void *ptr) {
 
     /* Figure out which block we're in. Note the use of truncated division... */
 
-    c = (((uintptr_t)ptr) - (uintptr_t)(&(_context->heap[0]))) / sizeof(umm_block);
+    c = (((uintptr_t)ptr) - (uintptr_t)(&(UMM_HEAP[0]))) / UMM_BLOCKSIZE;
 
     DBGLOG_DEBUG("Freeing block %6d\n", c);
 
@@ -613,7 +701,17 @@ static void umm_free_core(umm_heap_context_t *_context, void *ptr) {
 
         DBGLOG_DEBUG("Assimilate down to previous block, which is FREE\n");
 
+        #if (UMM_POINTER_CHECK == 1) || (UMM_POINTER_CHECK == 2)  // lite
+        umm_assimilate_down(_context, c, UMM_FREELIST_MASK);
+        // Free ptr is now in the middle of a free block.
+        // Leave a mark (set freelist bit) to help catch consecutive frees.
+        // A second free/realloc without intervening malloc should see the bit
+        // and abort().
+        UMM_NBLOCK(c) |= UMM_FREELIST_MASK;
+        #else
+        // Keep original code
         c = umm_assimilate_down(_context, c, UMM_FREELIST_MASK);
+        #endif
     } else {
         /*
          * The previous block is not a free block, so add this one to the head
@@ -652,6 +750,8 @@ void umm_free(void *ptr) {
 
     UMM_CRITICAL_ENTRY(id_free);
 
+    UMM_POINTER_1_LOG_CALLER();
+
     /* Need to be in the heap in which this block lives */
     umm_free_core(umm_get_ptr_context(ptr), ptr);
 
@@ -660,7 +760,7 @@ void umm_free(void *ptr) {
 
 /* ------------------------------------------------------------------------
  * Must be called only from within critical sections guarded by
- * UMM_CRITICAL_ENTRY() and UMM_CRITICAL_EXIT().
+ * UMM_CRITICAL_ENTRY(id) and UMM_CRITICAL_EXIT(id).
  */
 
 static void *umm_malloc_core(umm_heap_context_t *_context, size_t size) {
@@ -671,6 +771,8 @@ static void *umm_malloc_core(umm_heap_context_t *_context, size_t size) {
     uint16_t bestBlock;
 
     uint16_t cf;
+
+    NON_NULL_CONTEXT_ASSERT();
 
     STATS__ALLOC_REQUEST(id_malloc, size);
 
@@ -925,10 +1027,7 @@ void *umm_realloc(void *ptr, size_t size) {
 
     /* Need to be in the heap in which this block lives */
     umm_heap_context_t *_context = umm_get_ptr_context(ptr);
-    if (NULL == _context) {
-        panic();
-        return NULL;
-    }
+    NON_NULL_CONTEXT_ASSERT();
 
     if (0 == size) {
         DBGLOG_DEBUG("realloc to 0 size, just free the block\n");
@@ -936,8 +1035,12 @@ void *umm_realloc(void *ptr, size_t size) {
 
         umm_free(ptr);
 
+        UMM_POINTER_1_LOG_CALLER();   // Log the real caller not realloc()
+
         return (void *)NULL;
     }
+
+    UMM_POINTER_1_LOG_CALLER();
 
     STATS__ALLOC_REQUEST(id_realloc, size);
 
@@ -954,7 +1057,7 @@ void *umm_realloc(void *ptr, size_t size) {
 
     /* Figure out which block we're in. Note the use of truncated division... */
 
-    c = (((uintptr_t)ptr) - (uintptr_t)(&(_context->heap[0]))) / sizeof(umm_block);
+    c = (((uintptr_t)ptr) - (uintptr_t)(&(UMM_HEAP[0]))) / UMM_BLOCKSIZE;
 
     /* Figure out how big this block is ... the free bit is not set :-) */
 
@@ -962,7 +1065,7 @@ void *umm_realloc(void *ptr, size_t size) {
 
     /* Figure out how many bytes are in this block */
 
-    curSize = (blockSize * sizeof(umm_block)) - (sizeof(((umm_block *)0)->header));
+    curSize = (blockSize * UMM_BLOCKSIZE) - (sizeof(((umm_block *)0)->header));
 
     /* Protect the critical section... */
     UMM_CRITICAL_ENTRY(id_realloc);
@@ -985,7 +1088,7 @@ void *umm_realloc(void *ptr, size_t size) {
 
     DBGLOG_DEBUG("realloc blocks %d blockSize %d nextBlockSize %d prevBlockSize %d\n", blocks, blockSize, nextBlockSize, prevBlockSize);
 
-// C With each upstream update this section should be reevaluated.
+//C With each upstream update this section should be reevaluated.
 /*C
  *
  * The `#if defined(UMM_REALLOC_MINIMIZE_COPY)` section tracks the content of

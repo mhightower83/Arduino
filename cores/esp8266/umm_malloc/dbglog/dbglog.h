@@ -41,6 +41,23 @@
  * ----------------------------------------------------------------------------
  */
 
+/*
+  Downloaded from: https://github.com/rhempel/c-helper-macros/tree/develop
+  Applied uncrustify to be consistent with the rest of the umm_malloc files.
+  Changed from buffereed fprintf style calls to printf
+ */
+
+#ifndef __DBGLOG_H__
+#define __DBGLOG_H__
+#define DBGLOG_LEVEL_TRACE (6)
+#define DBGLOG_LEVEL_DEBUG (5)
+#define DBGLOG_LEVEL_CRITICAL (4)
+#define DBGLOG_LEVEL_ERROR (3)
+#define DBGLOG_LEVEL_WARNING (2)
+#define DBGLOG_LEVEL_INFO (1)
+#define DBGLOG_LEVEL_FORCE (0)
+#endif /* __DBGLOG_H__ */
+
 #undef DBGLOG_TRACE
 #undef DBGLOG_DEBUG
 #undef DBGLOG_CRITICAL
@@ -53,9 +70,10 @@
 #define DBGLOG_LEVEL 0
 #endif
 
-#ifndef DBGLOG_FUNCTION
-#define DBGLOG_FUNCTION printf
-#endif
+// Don't allow the possibility of printf being used in error. Commented out:
+// #ifndef DBGLOG_FUNCTION
+// #define DBGLOG_FUNCTION printf
+// #endif
 
 #define DBGLOG_32_BIT_PTR(x) ((uint32_t)(((uintptr_t)(x)) & 0xffffffff))
 

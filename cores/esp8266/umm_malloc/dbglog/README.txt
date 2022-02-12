@@ -1,2 +1,6 @@
-Downloaded from: https://github.com/rhempel/c-helper-macros/tree/develop
-Applied uncrustify to be consistent with the rest of the umm_malloc files.
+Updated with https://github.com/rhempel/c-helper-macros
+commit 31d0963312d056a27ed97896f2443eadd2fef005
+
+DBGLOG_32_BIT_PTR dropped out of the upstream version - added back.
+
+Applied uncrustify again to keep consistent.

@@ -9,8 +9,8 @@
  */
 
 /*
- * Minimized changes in umm_malloc_cfg.h, transition Arduino ESP8266 specific
- * changes to umm_malloc_cfgport.h.
+ * Minimized changes, keep Arduino ESP8266 specific changes in umm_malloc_
+ * cfgport.h when pracicle.
  */
 
 #ifndef _UMM_MALLOC_CFG_H
@@ -28,15 +28,43 @@ extern "C" {
  * There are a number of defines you can set at compile time that affect how
  * the memory allocator will operate.
  *
+ * You should NOT edit this file, it may be changed from time to time in
+ * the upstream project. Instead, you can do one of the following (in order
+ * of priority
+ *
+ * 1. Pass in the override values on the command line using -D UMM_xxx
+ * 2. Pass in the filename holding override values using -D UMM_CFGFILE
+ * 3. Set up defaults in a file called umm_malloc_cfgport.h
+ *
+ * NOTE WELL: For the command line -D options to take highest priority, your
+ *            project level override file must check that the UMM_xxx
+ *            value is not already defined before overriding
+ *
  * Unless otherwise noted, the default state of these values is #undef-ined!
  *
- * If you set them via the -D option on the command line (preferred method)
- * then this file handles all the configuration automagically and warns if
- * there is an incompatible configuration.
+ * As this is the top level configuration file, it is responsible for making
+ * sure that the configuration makes sense. For example the UMM_BLOCK_BODY_SIZE
+ * is a minimum of 8 and a multiple of 4.
  *
- * UMM_TEST_BUILD
+ * UMM_BLOCK_BODY_SIZE
  *
- * Set this if you want to compile in the test suite
+ * Defines the umm_block[].body size - it is 8 by default
+ *
+ * This assumes umm_ptr is a pair of uint16_t values
+ * which is 4 bytes plus the data[] array which is another 4 bytes
+ * for a total of 8.
+ *
+ * NOTE WELL that the umm_block[].body size must be multiple of
+ *           the natural access size of the host machine to ensure
+ *           that accesses are efficient.
+ *
+ *           We have not verified the checks below for 64 bit machines
+ *           because this library is targeted for 32 bit machines.
+ *
+ * UMM_NUM_HEAPS
+ *
+ * Set to the maximum number of heaps that can be defined by the
+ * application - defaults to 1.
  *
  * UMM_BEST_FIT (default)
  *
@@ -49,10 +77,6 @@ extern "C" {
  * Faster than UMM_BEST_FIT but can result in higher fragmentation.
  *
  * UMM_INFO
- *
- * Enables a dump of the heap contents and a function to return the total
- * heap size that is unallocated - note this is not the same as the largest
- * unallocated block on the heap!
  *
  * Set if you want the ability to calculate metrics on demand
  *
@@ -86,12 +110,25 @@ extern "C" {
  * Note this uses an extra 8 bytes per allocation, but you get the benefit of
  * being able to detect if your program is writing past an allocated buffer.
  *
- * UMM_DBG_LOG_LEVEL=n
+ * DBGLOG_ENABLE
+ *
+ * Set if you want to enable logging - the default is to use printf() but
+ * if you have any special requirements such as thread safety or a custom
+ * logging routine - you are free to everride the default
+ *
+ * DBGLOG_LEVEL=n
  *
  * Set n to a value from 0 to 6 depending on how verbose you want the debug
  * log to be
  *
- * ----------------------------------------------------------------------------
+ * UMM_MAX_CRITICAL_DEPTH_CHECK=n
+ *
+ * Set this if you want to compile in code to verify that the critical
+ * section maximum depth is not exceeded. If set, the value must be greater
+ * than 0.
+ *
+ * The critical depth checking is only needed if your target environment
+ * does not support reading and writing the current interrupt enable state.
  *
  * Support for this library in a multitasking environment is provided when
  * you add bodies to the UMM_CRITICAL_ENTRY and UMM_CRITICAL_EXIT macros
@@ -105,31 +142,6 @@ extern "C" {
 #else
 #include "umm_malloc_cfgport.h"
 #endif
-
-#define UMM_BEST_FIT
-#define UMM_INFO
-// #define UMM_INLINE_METRICS
-#define UMM_STATS
-
-/*
- * To support API call, system_show_malloc(), -DUMM_INFO is required.
- *
- * For the ESP8266 we need an ISR safe function to call for implementing
- * xPortGetFreeHeapSize(). We can get this with one of these options:
- *   1) -DUMM_STATS or -DUMM_STATS_FULL
- *   2) -DUMM_INLINE_METRICS (and implicitly includes -DUMM_INFO)
- *
- * If frequent calls are made to ESP.getHeapFragmentation(),
- * -DUMM_INLINE_METRICS would reduce long periods of interrupts disabled caused
- * by frequent calls to `umm_info()`. Instead, the computations get distributed
- * across each malloc, realloc, and free. This appears to require an additional
- * 116 bytes of IRAM vs using `UMM_STATS` with `UMM_INFO`.
- *
- * When both UMM_STATS and UMM_INLINE_METRICS are defined, macros and structures
- * have been optimized to reduce duplications.
- *
- */
-
 
 /* A couple of macros to make packing structures less compiler dependent */
 
@@ -152,14 +164,40 @@ extern "C" {
 
 /* -------------------------------------------------------------------------- */
 
+#ifndef UMM_BLOCK_BODY_SIZE
+    #define UMM_BLOCK_BODY_SIZE (8)
+#endif
+
+#define UMM_MIN_BLOCK_BODY_SIZE (8)
+
+#if (UMM_BLOCK_BODY_SIZE < UMM_MIN_BLOCK_BODY_SIZE)
+    #error UMM_BLOCK_BODY_SIZE must be at least 8!
+#endif
+
+#if ((UMM_BLOCK_BODY_SIZE % 4) != 0)
+    #error UMM_BLOCK_BODY_SIZE must be multiple of 4!
+#endif
+
+/* -------------------------------------------------------------------------- */
+
+#ifndef UMM_NUM_HEAPS
+    #define UMM_NUM_HEAPS (1)
+#endif
+
+#if (UMM_NUM_HEAPS < 1)
+    #error UMM_NUM_HEAPS must be at least 1!
+#endif
+
+/* -------------------------------------------------------------------------- */
+
 #ifdef UMM_BEST_FIT
-#ifdef  UMM_FIRST_FIT
-#error Both UMM_BEST_FIT and UMM_FIRST_FIT are defined - pick one!
-#endif
+  #ifdef  UMM_FIRST_FIT
+    #error Both UMM_BEST_FIT and UMM_FIRST_FIT are defined - pick one!
+  #endif
 #else /* UMM_BEST_FIT is not defined */
-#ifndef UMM_FIRST_FIT
+  #ifndef UMM_FIRST_FIT
     #define UMM_BEST_FIT
-#endif
+  #endif
 #endif
 
 /* -------------------------------------------------------------------------- */
@@ -168,9 +206,9 @@ extern "C" {
   #define UMM_FRAGMENTATION_METRIC_INIT() umm_fragmentation_metric_init(_context)
   #define UMM_FRAGMENTATION_METRIC_ADD(c) umm_fragmentation_metric_add(_context, c)
   #define UMM_FRAGMENTATION_METRIC_REMOVE(c) umm_fragmentation_metric_remove(_context, c)
-#ifndef UMM_INFO
+  #ifndef UMM_INFO
   #define UMM_INFO
-#endif
+  #endif
 #else
   #define UMM_FRAGMENTATION_METRIC_INIT()
   #define UMM_FRAGMENTATION_METRIC_ADD(c)
@@ -179,18 +217,12 @@ extern "C" {
 
 /* -------------------------------------------------------------------------- */
 
-/*
- * -D UMM_INFO :
- *
- * Enables a dup of the heap contents and a function to return the total
- * heap size that is unallocated - note this is not the same as the largest
- * unallocated block on the heap!
- */
-
-// #define UMM_INFO
-
 #ifdef UMM_INFO
 typedef struct UMM_HEAP_INFO_t {
+    #ifndef UMM_INFO_EXTRA
+    #define UMM_INFO_EXTRA
+    #endif
+    UMM_INFO_EXTRA;
     unsigned int totalEntries;
     unsigned int usedEntries;
     unsigned int freeEntries;
@@ -199,18 +231,21 @@ typedef struct UMM_HEAP_INFO_t {
     unsigned int usedBlocks;
     unsigned int freeBlocks;
     unsigned int freeBlocksSquared;
-    #ifdef UMM_INLINE_METRICS
-    size_t oom_count;
-    #define UMM_OOM_COUNT info.oom_count
-    #define UMM_FREE_BLOCKS info.freeBlocks
-    #endif
+
     unsigned int maxFreeContiguousBlocks;
+
+    int usage_metric;
+    int fragmentation_metric;
 }
 UMM_HEAP_INFO;
 
+// extend upstream code to handle multiple heaps
+//
 // extern UMM_HEAP_INFO ummHeapInfo;
-struct UMM_HEAP_CONTEXT;
-typedef struct UMM_HEAP_CONTEXT umm_heap_context_t;
+// struct UMM_HEAP_CONTEXT;
+// typedef struct UMM_HEAP_CONTEXT umm_heap_context_t;
+struct umm_heap_config;
+typedef struct umm_heap_config umm_heap_context_t;
 
 extern ICACHE_FLASH_ATTR void *umm_info(void *ptr, bool force);
 #ifdef UMM_INLINE_METRICS
@@ -218,329 +253,63 @@ extern size_t umm_free_heap_size(void);
 #else
 extern ICACHE_FLASH_ATTR size_t umm_free_heap_size(void);
 #endif
-// umm_max_block_size changed to umm_max_free_block_size in upstream.
-extern ICACHE_FLASH_ATTR size_t umm_max_block_size(void);
+extern ICACHE_FLASH_ATTR size_t umm_max_free_block_size(void);
 extern ICACHE_FLASH_ATTR int umm_usage_metric(void);
 extern ICACHE_FLASH_ATTR int umm_fragmentation_metric(void);
-extern ICACHE_FLASH_ATTR size_t umm_free_heap_size_core(umm_heap_context_t *_context);
-extern ICACHE_FLASH_ATTR size_t umm_max_block_size_core(umm_heap_context_t *_context);
-extern ICACHE_FLASH_ATTR int umm_usage_metric_core(umm_heap_context_t *_context);
-extern ICACHE_FLASH_ATTR int umm_fragmentation_metric_core(umm_heap_context_t *_context);
 #else
   #define umm_info(p,b)
   #define umm_free_heap_size() (0)
-  #define umm_max_block_size() (0)
-  #define umm_fragmentation_metric() (0)
+  #define umm_max_free_block_size() (0)
   #define umm_usage_metric() (0)
-  #define umm_free_heap_size_core() (0)
-  #define umm_max_block_size_core() (0)
-  #define umm_fragmentation_metric_core() (0)
+  #define umm_fragmentation_metric() (0)
 #endif
 
 /*
- * -D UMM_STATS :
- * -D UMM_STATS_FULL
+ * Three macros to make it easier to protect the memory allocator in a
+ * multitasking system. You should set these macros up to use whatever your
+ * system uses for this purpose. You can disable interrupts entirely, or just
+ * disable task switching - it's up to you
  *
- * This option provides a lightweight alternative to using `umm_info` just for
- * getting `umm_free_heap_size`.  With this option, a "free blocks" value is
- * updated on each call to malloc/free/realloc. This option does not offer all
- * the information that `umm_info` would have generated.
- *
- * This option is good for cases where the free heap is checked frequently. An
- * example is when an app closely monitors free heap to detect memory leaks. In
- * this case a single-core CPUs interrupt processing would have suffered the
- * most.
- *
- * UMM_STATS_FULL provides additional heap statistics. It can be used to gain
- * additional insight into heap usage. This option would add an additional 132
- * bytes of IRAM.
- *
- * Status: TODO: Needs to be proposed for upstream.
- */
-/*
-#define UMM_STATS
-#define UMM_STATS_FULL
- */
-
-#if !defined(UMM_STATS) && !defined(UMM_STATS_FULL) && !defined(UMM_INLINE_METRICS)
-#define UMM_STATS
-#endif
-
-#if defined(UMM_STATS) && defined(UMM_STATS_FULL)
-#undef UMM_STATS
-#endif
-
-#if defined(UMM_STATS) || defined(UMM_STATS_FULL)
-
-typedef struct UMM_STATISTICS_t {
-    #ifndef UMM_INLINE_METRICS
-// If we are doing UMM_INLINE_METRICS, we can move oom_count and free_blocks to
-// umm_info's structure and save a little DRAM and IRAM.
-// Otherwise it is defined here.
-    size_t free_blocks;
-    size_t oom_count;
-  #define UMM_OOM_COUNT stats.oom_count
-  #define UMM_FREE_BLOCKS stats.free_blocks
-    #endif
-    #ifdef UMM_STATS_FULL
-    size_t free_blocks_min;
-    size_t free_blocks_isr_min;
-    size_t alloc_max_size;
-    size_t last_alloc_size;
-    size_t id_malloc_count;
-    size_t id_malloc_zero_count;
-    size_t id_realloc_count;
-    size_t id_realloc_zero_count;
-    size_t id_free_count;
-    size_t id_free_null_count;
-    #endif
-}
-UMM_STATISTICS;
-
-#ifdef UMM_INLINE_METRICS
-#define STATS__FREE_BLOCKS_UPDATE(s) (void)(s)
-#else
-#define STATS__FREE_BLOCKS_UPDATE(s) _context->stats.free_blocks += (s)
-#endif
-
-#define STATS__OOM_UPDATE() _context->UMM_OOM_COUNT += 1
-
-extern size_t umm_free_heap_size_lw(void);
-extern size_t umm_get_oom_count(void);
-
-#else  // not UMM_STATS or UMM_STATS_FULL
-#define STATS__FREE_BLOCKS_UPDATE(s) (void)(s)
-#define STATS__OOM_UPDATE()          (void)0
-#endif
-
-#if defined(UMM_STATS) || defined(UMM_STATS_FULL) || defined(UMM_INFO)
-size_t ICACHE_FLASH_ATTR umm_block_size(void);
-#endif
-
-#ifdef UMM_STATS_FULL
-#define STATS__FREE_BLOCKS_MIN() \
-    do { \
-        if (_context->UMM_FREE_BLOCKS < _context->stats.free_blocks_min) { \
-            _context->stats.free_blocks_min = _context->UMM_FREE_BLOCKS;  \
-        } \
-    } while (false)
-
-#define STATS__FREE_BLOCKS_ISR_MIN() \
-    do { \
-        if (_context->UMM_FREE_BLOCKS < _context->stats.free_blocks_isr_min) { \
-            _context->stats.free_blocks_isr_min = _context->UMM_FREE_BLOCKS; \
-        } \
-    } while (false)
-
-#define STATS__ALLOC_REQUEST(tag, s)  \
-    do { \
-        _context->stats.tag##_count += 1; \
-        _context->stats.last_alloc_size = s; \
-        if (_context->stats.alloc_max_size < s) { \
-            _context->stats.alloc_max_size = s; \
-        } \
-    } while (false)
-
-#define STATS__ZERO_ALLOC_REQUEST(tag, s)  \
-    do { \
-        _context->stats.tag##_zero_count += 1; \
-    } while (false)
-
-#define STATS__NULL_FREE_REQUEST(tag)  \
-    do { \
-        umm_heap_context_t *_context = umm_get_current_heap(); \
-        _context->stats.tag##_null_count += 1; \
-    } while (false)
-
-#define STATS__FREE_REQUEST(tag)  \
-    do { \
-        _context->stats.tag##_count += 1; \
-    } while (false)
-
-
-size_t umm_free_heap_size_lw_min(void);
-size_t umm_free_heap_size_min_reset(void);
-size_t umm_free_heap_size_min(void);
-size_t umm_free_heap_size_isr_min(void);
-size_t umm_get_max_alloc_size(void);
-size_t umm_get_last_alloc_size(void);
-size_t umm_get_malloc_count(void);
-size_t umm_get_malloc_zero_count(void);
-size_t umm_get_realloc_count(void);
-size_t umm_get_realloc_zero_count(void);
-size_t umm_get_free_count(void);
-size_t umm_get_free_null_count(void);
-
-#else // Not UMM_STATS_FULL
-#define STATS__FREE_BLOCKS_MIN()          (void)0
-#define STATS__FREE_BLOCKS_ISR_MIN()      (void)0
-#define STATS__ALLOC_REQUEST(tag, s)      (void)(s)
-#define STATS__ZERO_ALLOC_REQUEST(tag, s) (void)(s)
-#define STATS__NULL_FREE_REQUEST(tag)     (void)0
-#define STATS__FREE_REQUEST(tag)          (void)0
-#endif
-
-/*
-  Per Devyte, the core currently doesn't support masking a specific interrupt
-  level. That doesn't mean it can't be implemented, only that at this time
-  locking is implemented as all or nothing.
-  https://github.com/esp8266/Arduino/issues/6246#issuecomment-508612609
-
-  So for now we default to all, 15.
- */
-#ifndef DEFAULT_CRITICAL_SECTION_INTLEVEL
-#define DEFAULT_CRITICAL_SECTION_INTLEVEL 15
-#endif
-
-/*
- * -D UMM_CRITICAL_METRICS
- *
- * Build option to collect timing usage data on critical section usage in
- * functions: info, malloc, realloc. Collects MIN, MAX, and number of time IRQs
- * were disabled at request time. Note, for realloc MAX disabled time will
- * include the time spent in calling malloc and/or free. Examine code for
- * specifics on what info is available and how to access.
- *
- * Status: TODO: Needs to be proposed for upstream. Also should include updates
- * to UMM_POISON_CHECK and UMM_INTEGRITY_CHECK to include a critical section.
- */
-/*
-#define UMM_CRITICAL_METRICS
- */
-
-#if defined(UMM_CRITICAL_METRICS)
-// This option adds support for gathering time locked data
-
-typedef struct UMM_TIME_STAT_t {
-    uint32_t min;
-    uint32_t max;
-    uint32_t start;
-    uint32_t intlevel;
-}
-UMM_TIME_STAT;
-
-typedef struct UMM_TIME_STATS_t UMM_TIME_STATS;
-
-extern UMM_TIME_STATS time_stats;
-
-bool get_umm_get_perf_data(UMM_TIME_STATS *p, size_t size);
-
-static inline void _critical_entry(UMM_TIME_STAT *p, uint32_t *saved_ps) {
-    *saved_ps = xt_rsil(DEFAULT_CRITICAL_SECTION_INTLEVEL);
-    if (0U != (*saved_ps & 0x0FU)) {
-        p->intlevel += 1U;
-    }
-
-    p->start = esp_get_cycle_count();
-}
-
-static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
-    uint32_t elapse = esp_get_cycle_count() - p->start;
-    if (elapse < p->min) {
-        p->min = elapse;
-    }
-
-    if (elapse > p->max) {
-        p->max = elapse;
-    }
-
-    xt_wsr_ps(*saved_ps);
-}
-#endif
-//////////////////////////////////////////////////////////////////////////////////////
-
-
-/*
- * A couple of macros to make it easier to protect the memory allocator
- * in a multitasking system. You should set these macros up to use whatever
- * your system uses for this purpose. You can disable interrupts entirely, or
- * just disable task switching - it's up to you
+ * If needed, UMM_CRITICAL_DECL can be used to declare or initialize
+ * synchronization elements before their use. "tag" can be used to add context
+ * uniqueness to the declaration.
+ *   exp.  #define UMM_CRITICAL_DECL(tag) uint32_t _saved_ps_##tag
+ * Another possible use for "tag", activity identifier when profiling time
+ * spent in UMM_CRITICAL. The "tag" values used are id_malloc, id_realloc,
+ * id_free, id_poison, id_integrity, and id_info.
  *
  * NOTE WELL that these macros MUST be allowed to nest, because umm_free() is
  * called from within umm_malloc()
  */
 
-#ifdef UMM_TEST_BUILD
+#ifndef UMM_CRITICAL_DECL
+    #define UMM_CRITICAL_DECL(tag)
+#endif
+
+#ifdef UMM_MAX_CRITICAL_DEPTH_CHECK
 extern int umm_critical_depth;
 extern int umm_max_critical_depth;
-    #define UMM_CRITICAL_ENTRY() { \
+    #ifndef UMM_CRITICAL_ENTRY
+        #define UMM_CRITICAL_ENTRY(tag) { \
         ++umm_critical_depth; \
         if (umm_critical_depth > umm_max_critical_depth) { \
             umm_max_critical_depth = umm_critical_depth; \
         } \
 }
-    #define UMM_CRITICAL_EXIT()  (umm_critical_depth--)
+    #endif
+    #ifndef UMM_CRITICAL_EXIT
+        #define UMM_CRITICAL_EXIT(tag)  (umm_critical_depth--)
+    #endif
 #else
-#if defined(UMM_CRITICAL_METRICS)
-        #define UMM_CRITICAL_DECL(tag) uint32_t _saved_ps_##tag
-        #define UMM_CRITICAL_ENTRY(tag)_critical_entry(&time_stats.tag, &_saved_ps_##tag)
-        #define UMM_CRITICAL_EXIT(tag) _critical_exit(&time_stats.tag, &_saved_ps_##tag)
-        #define UMM_CRITICAL_WITHINISR(tag) (0 != (_saved_ps_##tag & 0x0F))
-
-#else      // ! UMM_CRITICAL_METRICS
-// This method preserves the intlevel on entry and restores the
-// original intlevel at exit.
-        #define UMM_CRITICAL_DECL(tag) uint32_t _saved_ps_##tag
-        #define UMM_CRITICAL_ENTRY(tag) _saved_ps_##tag = xt_rsil(DEFAULT_CRITICAL_SECTION_INTLEVEL)
-        #define UMM_CRITICAL_EXIT(tag) xt_wsr_ps(_saved_ps_##tag)
-        #define UMM_CRITICAL_WITHINISR(tag) (0 != (_saved_ps_##tag & 0x0F))
-#endif
+   #ifndef UMM_CRITICAL_ENTRY
+        #define UMM_CRITICAL_ENTRY(tag)
+    #endif
+    #ifndef UMM_CRITICAL_EXIT
+        #define UMM_CRITICAL_EXIT(tag)
+    #endif
 #endif
 
 /*
-  * -D UMM_LIGHTWEIGHT_CPU
-  *
-  * The use of this macro is hardware/application specific.
-  *
-  * With some CPUs, the only available method for locking are the instructions
-  * for interrupts disable/enable. These macros are meant for lightweight single
-  * CPU systems that are sensitive to interrupts being turned off for too long. A
-  * typically UMM_CRITICAL_ENTRY would save current IRQ state then disable IRQs.
-  * Then UMM_CRITICAL_EXIT would restore previous IRQ state. This option adds
-  * additional critical entry/exit points by the method of defining the macros
-  * UMM_CRITICAL_SUSPEND and  UMM_CRITICAL_RESUME to the values of
-  * UMM_CRITICAL_EXIT and UMM_CRITICAL_ENTRY.  These additional exit/entries
-  * allow time to service interrupts during the reentrant sections of the code.
-  *
-  * Performance may be impacked if used with multicore CPUs. The higher frquency
-  * of locking and unlocking may be an issue with locking methods that have a
-  * high overhead.
-  *
-  * Status: TODO: Needs to be proposed for upstream.
-  */
-/*
- */
-#define UMM_LIGHTWEIGHT_CPU
-
-#ifdef UMM_LIGHTWEIGHT_CPU
-#define UMM_CRITICAL_SUSPEND(tag) UMM_CRITICAL_EXIT(tag)
-#define UMM_CRITICAL_RESUME(tag) UMM_CRITICAL_ENTRY(tag)
-#else
-#define UMM_CRITICAL_SUSPEND(tag) do {} while (0)
-#define UMM_CRITICAL_RESUME(tag) do {} while (0)
-#endif
-
-/*
- * -D UMM_REALLOC_MINIMIZE_COPY   or
- * -D UMM_REALLOC_DEFRAG
- *
- * Pick one of these two stratagies. UMM_REALLOC_MINIMIZE_COPY grows upward or
- * shrinks an allocation, avoiding copy when possible. UMM_REALLOC_DEFRAG gives
- * priority with growing the revised allocation toward an adjacent hole in the
- * direction of the beginning of the heap when possible.
- *
- * Status: TODO: These are new options introduced to optionally restore the
- * previous defrag property of realloc. The issue has been raised in the upstream
- * repo. No response at this time. Based on response, may propose for upstream.
- */
-/*
-#define UMM_REALLOC_MINIMIZE_COPY
-*/
-#define UMM_REALLOC_DEFRAG
-
-/*
- * -D UMM_INTEGRITY_CHECK :
- *
  * Enables heap integrity check before any heap operation. It affects
  * performance, but does NOT consume extra memory.
  *
@@ -552,13 +321,6 @@ extern int umm_max_critical_depth;
  * for corruption.
  */
 
-/*
- * Not normally enabled. Full intergity check may exceed 10us.
- */
-/*
-#define UMM_INTEGRITY_CHECK
- */
-
 #ifdef UMM_INTEGRITY_CHECK
 extern bool umm_integrity_check(void);
 #define INTEGRITY_CHECK() umm_integrity_check()
@@ -568,12 +330,7 @@ extern void umm_corruption(void);
 #define INTEGRITY_CHECK() (1)
 #endif
 
-/////////////////////////////////////////////////
-
 /*
- * -D UMM_POISON_CHECK :
- * -D UMM_POISON_CHECK_LITE
- *
  * Enables heap poisoning: add predefined value (poison) before and after each
  * allocation, and check before each heap operation that no poison is
  * corrupted.
@@ -593,218 +350,46 @@ extern void umm_corruption(void);
  * NOTE: each allocated buffer is aligned by 4 bytes. But when poisoning is
  * enabled, actual pointer returned to user is shifted by
  * `(sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE)`.
+ *
  * It's your responsibility to make resulting pointers aligned appropriately.
  *
  * If poison corruption is detected, the message is printed and user-provided
  * callback is called: `UMM_HEAP_CORRUPTION_CB()`
- *
- * UMM_POISON_CHECK - does a global heap check on all active allocation at
- * every alloc API call. May exceed 10us due to critical section with IRQs
- * disabled.
- *
- * UMM_POISON_CHECK_LITE - checks the allocation presented at realloc()
- * and free(). Expands the poison check on the current allocation to
- * include its nearest allocated neighbors in the heap.
- * umm_malloc() will also checks the neighbors of the selected allocation
- * before use.
- *
- * Status: TODO?: UMM_POISON_CHECK_LITE is a new option. We could propose for
- * upstream; however, the upstream version has much of the framework for calling
- * poison check on each alloc call refactored out. Not sure how this will be
- * received.
  */
+#if 0 // Handle these from umm_malloc_cfgport.h
+#ifdef UMM_POISON_CHECK
+  #define UMM_POISON_SIZE_BEFORE (4)
+  #define UMM_POISON_SIZE_AFTER (4)
+  #define UMM_POISONED_BLOCK_LEN_TYPE uint16_t
 
-/*
- * Compatibility for deprecated UMM_POISON
- */
-#if defined(UMM_POISON) && !defined(UMM_POISON_CHECK)
-#define UMM_POISON_CHECK_LITE
-#endif
-
-#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
-#if !defined(UMM_POISON_CHECK) && !defined(UMM_POISON_CHECK_LITE)
-/*
-#define UMM_POISON_CHECK
- */
- #define UMM_POISON_CHECK_LITE
-#endif
-#endif
-
-#define UMM_POISON_SIZE_BEFORE (4)
-#define UMM_POISON_SIZE_AFTER (4)
-#define UMM_POISONED_BLOCK_LEN_TYPE uint32_t
-
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
 extern void *umm_poison_malloc(size_t size);
 extern void *umm_poison_calloc(size_t num, size_t size);
 extern void *umm_poison_realloc(void *ptr, size_t size);
 extern void  umm_poison_free(void *ptr);
 extern bool  umm_poison_check(void);
-// Local Additions to better report location in code of the caller.
-void *umm_poison_realloc_fl(void *ptr, size_t size, const char *file, int line);
-void  umm_poison_free_fl(void *ptr, const char *file, int line);
-#if defined(UMM_POISON_CHECK_LITE)
-/*
-    * We can safely do individual poison checks at free and realloc and stay
-    * under 10us or close.
-    */
-   #define POISON_CHECK() 1
-   #define POISON_CHECK_NEIGHBORS(c) \
-    do { \
-        if (!check_poison_neighbors(_context, c)) \
-        panic(); \
-    } while (false)
+
+  #define POISON_CHECK() umm_poison_check()
 #else
-/* Not normally enabled. A full heap poison check may exceed 10us. */
-   #define POISON_CHECK() umm_poison_check()
-   #define POISON_CHECK_NEIGHBORS(c) do {} while (false)
+  #define POISON_CHECK() (1)
 #endif
-#else
-#define POISON_CHECK() 1
-#define POISON_CHECK_NEIGHBORS(c) do {} while (false)
 #endif
 
-
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
 /*
- * Overhead adjustments needed for free_blocks to express the number of bytes
- * that can actually be allocated.
+ * Add blank macros for DBGLOG_xxx() - if you want to override these on
+ * a per-source module basis, you must define DBGLOG_LEVEL and then
+ * #include "dbglog.h"
  */
-#define UMM_OVERHEAD_ADJUST ( \
-    umm_block_size() / 2 + \
-    UMM_POISON_SIZE_BEFORE + \
-    UMM_POISON_SIZE_AFTER + \
-    sizeof(UMM_POISONED_BLOCK_LEN_TYPE))
 
-#else
-#define UMM_OVERHEAD_ADJUST  (umm_block_size() / 2)
-#endif
-
-
-/////////////////////////////////////////////////
-#undef DBGLOG_FUNCTION
-#undef DBGLOG_FUNCTION_P
-
-#if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_OOM) || \
-    defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || \
-    defined(UMM_INTEGRITY_CHECK)
-#define DBGLOG_FUNCTION(fmt, ...) ets_uart_printf(fmt,##__VA_ARGS__)
-#else
-#define DBGLOG_FUNCTION(fmt, ...)   do { (void)fmt; } while (false)
-#endif
-
-/////////////////////////////////////////////////
-
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_INTEGRITY_CHECK)
-#if !defined(DBGLOG_LEVEL) || DBGLOG_LEVEL < 3
-// All debug prints in UMM_POISON_CHECK are level 3
-#undef DBGLOG_LEVEL
-#define DBGLOG_LEVEL 3
-#endif
-#endif
-
-#if defined(UMM_CRITICAL_METRICS)
-struct UMM_TIME_STATS_t {
-    UMM_TIME_STAT id_malloc;
-    UMM_TIME_STAT id_realloc;
-    UMM_TIME_STAT id_free;
-    #ifdef UMM_INFO
-    UMM_TIME_STAT id_info;
-    #endif
-    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
-    UMM_TIME_STAT id_poison;
-    #endif
-    #ifdef UMM_INTEGRITY_CHECK
-    UMM_TIME_STAT id_integrity;
-    #endif
-    UMM_TIME_STAT id_no_tag;
-};
-#endif
-/////////////////////////////////////////////////
-#ifdef DEBUG_ESP_OOM
-
-#define MEMLEAK_DEBUG
-
-// umm_*alloc are not renamed to *alloc
-// Assumes umm_malloc.h has already been included.
-
-#define umm_zalloc(s) umm_calloc(1,s)
-
-void *malloc_loc(size_t s, const char *file, int line);
-void *calloc_loc(size_t n, size_t s, const char *file, int line);
-void *realloc_loc(void *p, size_t s, const char *file, int line);
-// *alloc are macro calling *alloc_loc calling+checking umm_*alloc()
-// they are defined at the bottom of this file
-
-/////////////////////////////////////////////////
-
-#elif defined(UMM_POISON_CHECK)
-void *realloc_loc(void *p, size_t s, const char *file, int line);
-void  free_loc(void *p, const char *file, int line);
-#else // !defined(ESP_DEBUG_OOM)
-#endif
-
-
-
+#define DBGLOG_TRACE(format, ...)
+#define DBGLOG_DEBUG(format, ...)
+#define DBGLOG_CRITICAL(format, ...)
+#define DBGLOG_ERROR(format, ...)
+#define DBGLOG_WARNING(format, ...)
+#define DBGLOG_INFO(format, ...)
+#define DBGLOG_FORCE(format, ...)
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif /* _UMM_MALLOC_CFG_H */
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-#ifdef DEBUG_ESP_OOM
-// this must be outside from "#ifndef _UMM_MALLOC_CFG_H"
-// because Arduino.h's <cstdlib> does #undef *alloc
-// Arduino.h recall us to redefine them
-#include <pgmspace.h>
-// Reuse pvPort* calls, since they already support passing location information.
-// Specifically the debug version (heap_...) that does not force DRAM heap.
-void *IRAM_ATTR heap_pvPortMalloc(size_t size, const char *file, int line);
-void *IRAM_ATTR heap_pvPortCalloc(size_t count, size_t size, const char *file, int line);
-void *IRAM_ATTR heap_pvPortRealloc(void *ptr, size_t size, const char *file, int line);
-void *IRAM_ATTR heap_pvPortZalloc(size_t size, const char *file, int line);
-void IRAM_ATTR heap_vPortFree(void *ptr, const char *file, int line);
-
-#define malloc(s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; heap_pvPortMalloc(s, mem_debug_file, __LINE__); })
-#define calloc(n,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; heap_pvPortCalloc(n, s, mem_debug_file, __LINE__); })
-#define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; heap_pvPortRealloc(p, s, mem_debug_file, __LINE__); })
-
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
-#define dbg_heap_free(p) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; heap_vPortFree(p, mem_debug_file, __LINE__); })
-#else
-#define dbg_heap_free(p) free(p)
-#endif
-
-#elif defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
-#include <pgmspace.h>
-void *IRAM_ATTR heap_pvPortRealloc(void *ptr, size_t size, const char *file, int line);
-#define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; heap_pvPortRealloc(p, s, mem_debug_file, __LINE__); })
-
-void IRAM_ATTR heap_vPortFree(void *ptr, const char *file, int line);
-// C - to be discussed
-/*
-  Problem, I would like to report the file and line number with the umm poison
-  event as close as possible to the event. The #define method works for malloc,
-  calloc, and realloc those names are not as generic as free. A #define free
-  captures too much. Classes with methods called free are included :(
-  Inline functions would report the address of the inline function in the .h
-  not where they are called.
-
-  Anybody know a trick to make this work?
-
-  Create dbg_heap_free() as an alternative for free() when you need a little
-  more help in debugging the more challenging problems.
-*/
-#define dbg_heap_free(p) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; heap_vPortFree(p, mem_debug_file, __LINE__); })
-
-#else
-#define dbg_heap_free(p) free(p)
-#endif /* DEBUG_ESP_OOM */
-
-#ifdef __cplusplus
-}
-#endif

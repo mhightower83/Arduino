@@ -60,7 +60,7 @@ static bool check_poison(const void *ptr, size_t poison_size,
     }
 
     if (!ok) {
-        DBGLOG_ERROR("No poison %s block at: 0x%lx, actual data:", where, (unsigned long)ptr);
+        DBGLOG_ERROR("No poison %s block at: 0x%08x, actual data:", where, DBGLOG_32_BIT_PTR(ptr));
         dump_mem(ptr, poison_size);
         DBGLOG_ERROR("\n");
     }
@@ -79,8 +79,8 @@ static bool check_poison_block(umm_block *pblock) {
         DBGLOG_ERROR("check_poison_block is called for free block 0x%lx\n", (unsigned long)pblock);
     } else {
         /* the block is used; let's check poison */
-        unsigned char *pc = (unsigned char *)pblock->body.data;
-        unsigned char *pc_cur;
+        uint8_t *pc = pblock->body.data;
+        uint8_t *pc_cur;
 
         pc_cur = pc + sizeof(UMM_POISONED_BLOCK_LEN_TYPE);
         if (!check_poison(pc_cur, UMM_POISON_SIZE_BEFORE, "before")) {
@@ -107,7 +107,7 @@ clean:
  * `size_w_poison` is a size of the whole block, including a poison.
  */
 static void *get_poisoned(void *vptr, size_t size_w_poison) {
-    unsigned char *ptr = (unsigned char *)vptr;
+    uint8_t *ptr = (uint8_t *)vptr;
 
     if (size_w_poison != 0 && ptr != NULL) {
 
@@ -147,7 +147,7 @@ static void *get_unpoisoned(void *vptr) {
             return NULL;
         }
         /* Figure out which block we're in. Note the use of truncated division... */
-        c = (ptr - (uintptr_t)(&(_context->heap[0]))) / sizeof(umm_block);
+        c = (ptr - (uintptr_t)(&(_context->pheap[0]))) / UMM_BLOCKSIZE;
 
         check_poison_block(&UMM_BLOCK(c));
     }
@@ -224,6 +224,7 @@ void umm_poison_free(void *ptr) {
 
 bool umm_poison_check(void) {
     UMM_CRITICAL_DECL(id_poison);
+
     bool ok = true;
     uint16_t cur;
 
