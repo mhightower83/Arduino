@@ -24,6 +24,7 @@
 #include <Arduino.h>
 #include "core_esp8266_features.h"
 #include "spi_vendors.h"
+#include "umm_malloc/umm_malloc.h"
 
 /**
  * AVR macros for WDT management

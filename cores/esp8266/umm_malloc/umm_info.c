@@ -29,7 +29,8 @@ uint32_t sqrt32(uint32_t n);
 
 void ICACHE_FLASH_ATTR compute_usage_metric(umm_heap_context_t *_context);
 void ICACHE_FLASH_ATTR compute_fragmentation_metric(umm_heap_context_t *_context);
-void* ICACHE_FLASH_ATTR umm_info(void *ptr, bool force);
+void* ICACHE_FLASH_ATTR umm_info_ctx(umm_heap_context_t *_context, void *ptr, [[maybe_unused]] bool force_print);
+void* ICACHE_FLASH_ATTR umm_info(void *ptr, bool force_print);
 
 void compute_usage_metric(umm_heap_context_t *_context) {
     if (0 == _context->info.freeBlocks) {
@@ -48,10 +49,16 @@ void compute_fragmentation_metric(umm_heap_context_t *_context) {
     }
 }
 
-void *umm_info(void *ptr, bool force) {
+void *umm_info(void *ptr, [[maybe_unused]] bool force_print) {
+    return umm_info_ctx(umm_get_current_heap(), ptr, force_print);
+}
+
+void *umm_info_ctx(umm_heap_context_t *_context, void *ptr, [[maybe_unused]] bool force_print) {
     uint16_t blockNo = 0;
     #ifdef UMM_INFO_NO_PRINT
-    force = false;
+    const bool force = false;
+    #else
+    const bool force = force_print;
     #endif
 
     UMM_CRITICAL_DECL(id_info);
@@ -60,8 +67,6 @@ void *umm_info(void *ptr, bool force) {
 
     /* Protect the critical section... */
     UMM_CRITICAL_ENTRY(id_info);
-
-    umm_heap_context_t *_context = umm_get_current_heap();
 
     /*
      * Clear out all of the entries in the ummHeapInfo structure before doing
@@ -204,7 +209,7 @@ void *umm_info(void *ptr, bool force) {
     // If debug build, let them know why we are not printing.
     // Otherwise lets keep FLASH usage down.
     #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
-    DBGLOG_FORCE(force, "\n*** umm_info() cannot print. It was built with '-DUMM_INFO_NO_PRINT'.\n")
+    DBGLOG_FORCE(force_print, "\n*** umm_info() cannot print. Remove build option '-DUMM_INFO_NO_PRINT'.\n")
     #endif
     #endif
 
@@ -214,16 +219,16 @@ void *umm_info(void *ptr, bool force) {
 /* ------------------------------------------------------------------------ */
 
 size_t umm_free_heap_size(void) {
-    #ifndef UMM_INLINE_METRICS
-    umm_info(NULL, false);
-    #endif
     umm_heap_context_t *_context = umm_get_current_heap();
+    #ifndef UMM_INLINE_METRICS
+    umm_info_ctx(_context, NULL, false);
+    #endif
     return (size_t)_context->info.freeBlocks * UMM_BLOCKSIZE;
 }
 
 size_t umm_max_free_block_size(void) {
-    umm_info(NULL, false);
     umm_heap_context_t *_context = umm_get_current_heap();
+    umm_info_ctx(_context, NULL, false);
     return _context->info.maxFreeContiguousBlocks * UMM_BLOCKSIZE;
 }
 
@@ -232,7 +237,7 @@ int umm_usage_metric(void) {
     #ifdef UMM_INLINE_METRICS
     compute_usage_metric(_context);
     #else
-    umm_info(NULL, false);
+    umm_info_ctx(_context, NULL, false);
     #endif
     DBGLOG_DEBUG("usedBlocks %i totalBlocks %i\n", _context->info.usedBlocks, _context->info.totalBlocks);
 
@@ -244,7 +249,7 @@ int umm_fragmentation_metric(void) {
     #ifdef UMM_INLINE_METRICS
     compute_fragmentation_metric(_context);
     #else
-    umm_info(NULL, false);
+    umm_info_ctx(_context, NULL, false);
     #endif
     DBGLOG_DEBUG("freeBlocks %i freeBlocksSquared %i\n", _context->info.freeBlocks, _context->info.freeBlocksSquared);
 

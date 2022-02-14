@@ -90,77 +90,6 @@ static bool check_poison_neighbors(
 #endif
 
 #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
-//
-// /* ------------------------------------------------------------------------ */
-//
-// static void *get_unpoisoned_check_neighbors(void *vptr, const char *file, int line) {
-//     uintptr_t ptr = (uintptr_t)vptr;
-//
-//     if (ptr != 0) {
-//
-//         ptr -= (sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE);
-//
-//         #if defined(UMM_POISON_CHECK_LITE)
-//         UMM_CRITICAL_DECL(id_poison);
-//         uint16_t c;
-//         bool poison = false;
-//         umm_heap_context_t *_context = umm_get_ptr_context(vptr);
-//         if (NULL == _context) {
-//             panic();
-//             return NULL;
-//         }
-//         /* Figure out which block we're in. Note the use of truncated division... */
-//         c = (ptr - (uintptr_t)(&(_context->pheap[0]))) / UMM_BLOCKSIZE;
-//
-//         UMM_CRITICAL_ENTRY(id_poison);
-//         poison = check_poison_block(&UMM_BLOCK(c)) && check_poison_neighbors(_context, c);
-//         UMM_CRITICAL_EXIT(id_poison);
-//
-//         if (!poison) {
-//             if (file) {
-//                 __panic_func(file, line, "");
-//             } else {
-//                 abort();
-//             }
-//         }
-//         #else
-//         /*
-//          *  No need to check poison here. POISON_CHECK() has already done a
-//          *  full heap check.
-//          */
-//         (void)file;
-//         (void)line;
-//         #endif
-//     }
-//
-//     return (void *)ptr;
-// }
-//
-// /* ------------------------------------------------------------------------ */
-//
-// void *umm_poison_realloc_fl(void *ptr, size_t size, const char *file, int line) {
-//     void *ret;
-//
-//     ptr = get_unpoisoned_check_neighbors(ptr, file, line);
-//
-//     add_poison_size(&size);
-//     ret = umm_realloc(ptr, size);
-//
-//     ret = get_poisoned(ret, size);
-//
-//     return ret;
-// }
-//
-// /* ------------------------------------------------------------------------ */
-//
-// void umm_poison_free_fl(void *ptr, const char *file, int line) {
-//
-//     ptr = get_unpoisoned_check_neighbors(ptr, file, line);
-//
-//     umm_free(ptr);
-// }
-// #endif
-
 static bool get_unpoisoned_check_neighbors_core(
     const umm_heap_context_t *const _context,
     struct UMM_PTR_CHECK_RESULTS* ptr_chk,
@@ -169,7 +98,8 @@ static bool get_unpoisoned_check_neighbors_core(
     uintptr_t ptr = (uintptr_t)vptr;
 
     /* Figure out which block we're in. Note the use of truncated division... */
-    uint16_t c = (ptr - (uintptr_t)(&(_context->pheap[0]))) / sizeof(umm_block);
+    // uint16_t c = (ptr - (uintptr_t)(&(_context->pheap[0]))) / sizeof(umm_block);
+    uint16_t c = (ptr - (uintptr_t)_context->pheap) / sizeof(umm_block);
 
     bool poison = check_poison_block(&UMM_BLOCK(c)) && check_poison_neighbors(_context, c);
 
@@ -187,7 +117,20 @@ static void *get_unpoisoned_check_neighbors(const void * const vptr, const void*
         // No return on fail
         umm_check_wrapper(vptr, caller, file, line, get_unpoisoned_check_neighbors_core);
 
-        ptr -= (sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE);
+        ptr -= UMM_POISON_SIZE_BEFORE;
+
+        #if (UMM_POINTER_CHECK >= 2)
+        /*
+         * We save the caller in the UMM_POISON_SIZE_BEFORE field (4 byte
+         * field). If the buffer is replaced or freed it will be tagged.
+         * Otherwise get_poison will overwrite the field with poison.
+         * There is a chance it may get overwriten when freed by future nearby
+         * heap allocations.
+         */
+        *(const void**)ptr = caller;
+        #endif
+
+        ptr -= sizeof(UMM_POISONED_BLOCK_LEN_TYPE);
     }
 
     return (void *)ptr;
@@ -239,14 +182,12 @@ size_t ICACHE_FLASH_ATTR umm_heap_id(void) {
 size_t umm_max_block_size(void) __attribute__ ((alias("umm_max_free_block_size")));
 
 // needed by Esp-frag.cpp
-void umm_get_heap_stats(uint32_t* hfree, uint32_t* hmax, uint8_t* hfrag) {
+void ICACHE_FLASH_ATTR umm_get_heap_stats_ctx(umm_heap_context_t *_context, uint32_t* hfree, uint32_t* hmax, uint8_t* hfrag) {
     // L2 / Euclidean norm of free block sizes.
     // Having getFreeHeap()=sum(hole-size), fragmentation is given by
     // 100 * (1 - sqrt(sum(hole-size²)) / sum(hole-size))
 
-    umm_heap_context_t *_context = umm_get_current_heap();
-
-    umm_info(NULL, false);
+    umm_info_ctx(_context, NULL, false);
 
     uint32_t free_size = _context->info.freeBlocks * UMM_BLOCKSIZE;
     if (hfree) {
@@ -259,10 +200,17 @@ void umm_get_heap_stats(uint32_t* hfree, uint32_t* hmax, uint8_t* hfrag) {
         *hfrag = _context->info.fragmentation_metric;
     }
 }
+
+void ICACHE_FLASH_ATTR umm_get_heap_stats(uint32_t* hfree, uint32_t* hmax, uint8_t* hfrag) {
+    umm_get_heap_stats_ctx(umm_get_current_heap(), hfree, hmax, hfrag);
+}
 #endif
 
 #if (UMM_STATS > 0) || defined(UMM_INFO)
 size_t umm_block_size(void) {
+    #ifdef UMM_VARIABLE_BLOCK_SIZE
+    umm_heap_context_t *_context = umm_get_current_heap();
+    #endif
     return UMM_BLOCKSIZE;
 }
 #endif
@@ -464,7 +412,7 @@ static bool umm_pointer_quick_check_core(
             continue;
         }
 
-        uint16_t cur = (umm_data_ptr - (uintptr_t)(&(_context->pheap[0]))) / sizeof(umm_block);
+        uint16_t cur = (umm_data_ptr - (uintptr_t)_context->pheap) / sizeof(umm_block);
 
         /* Range check block number */
         if (cur >= UMM_NUMBLOCKS || 0 == cur) {
@@ -483,7 +431,7 @@ static bool umm_pointer_quick_check_core(
          * The high bit should be off for our pointer.
          *
          * In the non-debug case for umm_free(), when umm_assimilate_down()
-         * occurs, the UMM_FREELIST_MASK bit is not set because the free-ed
+         * occurs, the UMM_FREELIST_MASK bit is not set because the freed
          * allocation is in the higher part of a free block. To assist in
          * "double-free detection," optional code is added to apply the
          * UMM_FREELIST_MASK bit.
@@ -592,7 +540,8 @@ static bool umm_pointer_full_check_core(
         return false;
     }
 
-    const void * const ptr = (void *)((uintptr_t)vptr  - (uintptr_t)(&(_context->pheap[0])));
+    // const void * const ptr = (void *)((uintptr_t)vptr  - (uintptr_t)(&(_context->pheap[0])));
+    const void * const ptr = (void *)((uintptr_t)vptr  - (uintptr_t)_context->pheap);
 
     /*
      * Now loop through the block lists. The terminating condition is an nb
@@ -720,13 +669,17 @@ void umm_check_wrapper(
  */
 #if (UMM_POINTER_CHECK == 2)
 void umm_pointer_check_wrap(const void* const ptr, const void* const caller, const char* const file, const int line) {
-    return umm_check_wrapper(ptr, caller, file, line, umm_pointer_quick_check_core);
+    if (ptr) {
+        umm_check_wrapper(ptr, caller, file, line, umm_pointer_quick_check_core);
+    }
 }
 #endif
 
 #if (UMM_POINTER_CHECK == 3)
 void umm_pointer_check_wrap(const void* const ptr, const void* const caller, const char* const file, const int line) {
-    return umm_check_wrapper(ptr, caller, file, line, umm_pointer_full_check_core);
+    if (ptr) {
+        umm_check_wrapper(ptr, caller, file, line, umm_pointer_full_check_core);
+    }
 }
 #endif
 
@@ -818,6 +771,21 @@ static umm_heap_context_t* umm_data_ptr_integrity_check(const void* const umm_da
 #endif
 
 #if (UMM_POINTER_CHECK != 0)
+void exception_decoder_helper(const void* caller, uintptr_t ptr, void (*fn_printf)(const char *fmt, ...)) {
+    if (!caller) {
+        return;
+    }
+
+    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+    void* prev_caller = *(void**)(ptr - UMM_POISON_SIZE_BEFORE);
+    // 1st caller to free
+    fn_printf(PSTR("  epc1=%p, epc2=0x00000000, epc3=0x00000000, excvaddr=%p, depc=0x00000000\r\n"), prev_caller, (void *)ptr);
+    #endif
+
+    // 2nd caller to free
+    fn_printf(PSTR("  epc1=%p, epc2=0x00000000, epc3=0x00000000, excvaddr=%p, depc=0x00000000\r\n"), caller, (void *)ptr);
+}
+
 /*
  * Postmortem report - prints an interpretation of UMM_PTR_CHECK_RESULTS.
  */
@@ -847,8 +815,11 @@ void umm_postmortem_report(void (*fn_printf)(const char *fmt, ...)) {
 #else
         if (free_mark == ptr_chk->rc) {
             fn_printf(PSTR("  Pointer %p a double free() or corrupted. Found the free bit set.\n"), (void *)ptr_chk->sketch_ptr);
-        } else {
+        } else
+        if (corrupt == ptr_chk->rc) {
             fn_printf(PSTR("  The pointer %p is not a Heap address.\n"), (void *)ptr_chk->sketch_ptr);
+        } else {
+            fn_printf(PSTR("  The pointer %p is not an active allocation.\n"), (void *)ptr_chk->sketch_ptr);
         }
 #endif
     } else
@@ -870,6 +841,9 @@ void umm_postmortem_report(void (*fn_printf)(const char *fmt, ...)) {
         fn_printf(PSTR("  File: %S:%d\n"), ptr_chk->file, ptr_chk->line);
     }
     #endif
+
+    exception_decoder_helper(ptr_chk->caller, ptr_chk->sketch_ptr, fn_printf);
+
 }
 #endif
 

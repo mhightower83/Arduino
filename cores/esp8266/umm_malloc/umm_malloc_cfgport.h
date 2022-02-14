@@ -54,7 +54,9 @@
  */
  // TODO comment these three out before push
  // #define UMM_STATS 2
+ #ifndef UMM_STATS
  #define UMM_STATS 1
+ #endif
 // #define UMM_STATS 10 // UMM_STATS_FULL
 // #define UMM_CRITICAL_METRICS 1
 
@@ -119,11 +121,25 @@
 // #define UMM_INFO_NO_PRINT 1
 
 /*
+ * -DUMM_VARIABLE_BLOCK_SIZE
+ *
+ * UMM_VARIABLE_BLOCK_SIZE calculates the optimum UMM_BLOCK_BODY_SIZE needed for
+ * umm_malloc to manage the entire size of the memory specified. A unique
+ * UMM_BLOCK_BODY_SIZE value is calculated for each heap.
+ *
+ * Uses 76 bytes more IRAM and 64 bytes more IROM with UMM_INIT_USE_IRAM = 0
+ * Cost to make selectable +16 bytes IROM
+ */
+// #define UMM_VARIABLE_BLOCK_SIZE
+
+/*
  * Enables a function to dump the heap contents and also returns the total
  * heap size that is unallocated - note this is not the same as the largest
  * unallocated block on the heap!
  */
+#ifndef UMM_INFO
 #define UMM_INFO
+#endif
 
 #define DBGLOG_ENABLE
 /*
@@ -132,6 +148,11 @@
  */
 #define DBGLOG_LEVEL 0
 
+///////////////////////////////////////////////////////////////////////////////
+// No configuration options below this line
+///////////////////////////////////////////////////////////////////////////////
+
+typedef struct umm_heap_config umm_heap_context_t;
 
 /*
  * Start addresses and the size of the heap
@@ -201,7 +222,7 @@ extern ICACHE_FLASH_ATTR void umm_get_heap_stats(uint32_t *hfree, uint32_t *hmax
 #endif
 
 
-// We move our extra stuff for OOM count into macrfo UMM_INFO_EXTRA
+// We move our extra stuff for OOM count into macro UMM_INFO_EXTRA
 #ifdef UMM_INFO
 #ifdef UMM_INLINE_METRICS
 #define UMM_INFO_EXTRA size_t oom_count
@@ -557,6 +578,10 @@ static inline void _critical_exit(UMM_TIME_STAT *p, uint32_t *saved_ps) {
 /*
 #define UMM_INTEGRITY_CHECK
  */
+#if defined(UMM_INTEGRITY_CHECK) || defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
+extern bool umm_integrity_check_ctx(umm_heap_context_t *_context);
+extern bool umm_integrity_check(void);
+#endif
 
 /////////////////////////////////////////////////
 
@@ -631,6 +656,8 @@ extern void *umm_poison_calloc(size_t num, size_t size);
 extern void *umm_poison_realloc(void *ptr, size_t size);
 extern void  umm_poison_free(void *ptr);
 extern bool  umm_poison_check(void);
+extern bool  umm_poison_check_ctx(umm_heap_context_t *_context);
+
 // Local Additions to better report location in code of the caller.
 void *umm_poison_realloc_cfl(void *ptr, size_t size, const void* const caller, const char *file, int line);
 void umm_poison_free_cfl(void *ptr, const void* const caller, const char *file, int line);
@@ -748,6 +775,7 @@ extern void umm_pointer_check_wrap(const void* const ptr, const void* const call
 #endif
 #pragma message("UMM_POINTER_CHECK == - " VALUE(UMM_POINTER_CHECK) " -")
 #endif
+
 
 
 #if defined(UMM_CRITICAL_METRICS)

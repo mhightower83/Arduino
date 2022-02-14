@@ -89,7 +89,7 @@ extern "C" {
 #undef realloc
 #undef free
 
-#elif defined(DEBUG_ESP_OOM) || defined(UMM_INTEGRITY_CHECK)
+#elif defined(DEBUG_ESP_OOM) || defined(UMM_INTEGRITY_CHECK) || (UMM_POINTER_CHECK >= 2)
 // All other debug wrappers that do not require handling poison
 #define UMM_MALLOC(s)           umm_malloc(s)
 #define UMM_CALLOC(n,s)         umm_calloc(n,s)
@@ -180,6 +180,9 @@ int umm_last_fail_alloc_line = 0;
 // Debugging helper, save the last caller address that got a NULL pointer
 // response. And when available, the file and line number.
 #if defined(DEBUG_ESP_OOM)
+void IRAM_ATTR print_loc(size_t size, const char* file, int line, void* caller);
+void IRAM_ATTR print_oom_size(size_t size, void* caller);
+
 #define PTR_CHECK__LOG_LAST_FAIL_FL(p, s, f, l) \
     if(0 != (s) && 0 == p)\
     {\
@@ -187,6 +190,7 @@ int umm_last_fail_alloc_line = 0;
       umm_last_fail_alloc_size = s;\
       umm_last_fail_alloc_file = f;\
       umm_last_fail_alloc_line = l;\
+      print_loc(s, f, l, umm_last_fail_alloc_addr);\
     }
 #define PTR_CHECK__LOG_LAST_FAIL(p, s) \
     if(0 != (s) && 0 == p)\
@@ -195,6 +199,7 @@ int umm_last_fail_alloc_line = 0;
       umm_last_fail_alloc_size = s;\
       umm_last_fail_alloc_file = NULL;\
       umm_last_fail_alloc_line = 0;\
+      print_oom_size(s, umm_last_fail_alloc_addr);\
     }
 #else
 // These are targeted at LIBC, always capture minimum OOM details
@@ -218,6 +223,12 @@ int umm_last_fail_alloc_line = 0;
 // overrides/thin wrapper functions for libc Heap calls
 // Note these always have at least the lite version of PTR_CHECK__LOG_LAST_FAIL
 // monitoring in place.
+//
+// Note for ENABLE_THICK_DEBUG_WRAPPERS case these functions call the function
+// below resulting in these thin wrappers being logged as caller rather than
+// the functions in libc that called here. This applies to UMM_POINTER_CHECK in
+// particular. This should not matter since we are focusing on debugging the
+// sketch not libc.
 void* _malloc_r(struct _reent* unused, size_t size)
 {
     (void) unused;
@@ -263,38 +274,44 @@ void* _calloc_r(struct _reent* unused, size_t count, size_t size)
 
 #define DEBUG_HEAP_PRINTF ets_uart_printf
 
-void IRAM_ATTR print_loc(size_t size, const char* file, int line)
+void IRAM_ATTR print_loc(size_t size, const char* file, int line, void* caller)
 {
-    (void)size;
-    (void)line;
     if (system_get_os_print()) {
         DEBUG_HEAP_PRINTF(":oom(%d)@", (int)size);
 
-        bool inISR = ETS_INTR_WITHINISR();
-        if (inISR && (uint32_t)file >= 0x40200000) {
-            DEBUG_HEAP_PRINTF("File: %p", file);
-        } else if (!inISR && (uint32_t)file >= 0x40200000) {
-            char buf[strlen_P(file) + 1];
-            strcpy_P(buf, file);
-            DEBUG_HEAP_PRINTF(buf);
+        if (file) {
+            bool inISR = ETS_INTR_WITHINISR();
+            if (inISR && (uint32_t)file >= 0x40200000) {
+                DEBUG_HEAP_PRINTF("File: %p", file);
+            } else if (!inISR && (uint32_t)file >= 0x40200000) {
+                char buf[strlen_P(file) + 1];
+                strcpy_P(buf, file);
+                DEBUG_HEAP_PRINTF(buf);
+            } else {
+                DEBUG_HEAP_PRINTF(file);
+            }
+            DEBUG_HEAP_PRINTF(":%d\n", line);
         } else {
-            DEBUG_HEAP_PRINTF(file);
+            DEBUG_HEAP_PRINTF("%p\n", caller);
         }
-
-        DEBUG_HEAP_PRINTF(":%d\n", line);
     }
 }
 
-void IRAM_ATTR print_oom_size(size_t size)
+void IRAM_ATTR print_oom_size(size_t size, void* caller)
 {
-    (void)size;
     if (system_get_os_print()) {
-        DEBUG_HEAP_PRINTF(":oom(%d)@?\n", (int)size);
+        DEBUG_HEAP_PRINTF(":oom(%d)@%p\n", (int)size, caller);
     }
 }
 
-#define OOM_CHECK__PRINT_OOM(p, s) if ((s) && !(p)) print_oom_size(s)
-#define OOM_CHECK__PRINT_LOC(p, s, f, l) if ((s) && !(p)) print_loc(s, f, l)
+// These macros have been moved into PTR_CHECK__LOG_LAST_FAIL*
+#if 0
+#define OOM_CHECK__PRINT_OOM(p, s) if ((s) && !(p)) print_oom_size(s, __builtin_return_address(0))
+#define OOM_CHECK__PRINT_LOC(p, s, f, l) if ((s) && !(p)) print_loc(s, f, l, __builtin_return_address(0))
+#else
+#define OOM_CHECK__PRINT_OOM(p, s)
+#define OOM_CHECK__PRINT_LOC(p, s, f, l)
+#endif
 
 #else
 // We are finished with LIBC alloc functions. From here down, no OOM logging.
@@ -530,3 +547,49 @@ void IRAM_ATTR vPortFree(void *ptr, const char* file, int line)
 }
 
 };
+
+#ifdef ENABLE_THICK_DEBUG_WRAPPERS
+///////////////////////////////////////////////////////////////////////////////
+// Note I just threw this together from files from the Internet
+// Need to find the proper way to supply replacement delete operator
+//
+#include <bits/c++config.h>
+
+#if !_GLIBCXX_HOSTED
+// A freestanding C runtime may not provide "free" -- but there is no
+// other reasonable way to implement "operator delete".
+namespace std
+{
+_GLIBCXX_BEGIN_NAMESPACE_VERSION
+  extern "C" void free(void*);
+_GLIBCXX_END_NAMESPACE_VERSION
+} // namespace
+#pragma message("!_GLIBCXX_HOSTED")
+#else
+// #pragma message("_GLIBCXX_HOSTED")
+// This is the path taken
+#include <cstdlib>
+#endif
+
+#include "new"
+
+// The sized deletes are defined in other files.
+#pragma GCC diagnostic ignored "-Wsized-deallocation"
+
+// These function replace their weak counterparts tagged with _GLIBCXX_WEAK_DEFINITION
+void operator delete(void* ptr) noexcept
+{
+    INTEGRITY_CHECK__ABORT();
+    PTR_CHECK__LOG_INVALID(ptr);
+    UMM_FREE_FL(ptr, NULL, 0);
+    POISON_CHECK__ABORT();
+}
+
+void operator delete(void* ptr, std::size_t) noexcept
+{
+    INTEGRITY_CHECK__ABORT();
+    PTR_CHECK__LOG_INVALID(ptr);
+    UMM_FREE_FL(ptr, NULL, 0);
+    POISON_CHECK__ABORT();
+}
+#endif

@@ -1,6 +1,12 @@
 #ifndef _UMM_LOCAL_H
 #define _UMM_LOCAL_H
 
+#ifdef UMM_VARIABLE_BLOCK_SIZE
+// UMM_BLOCK_BODY_SIZE should not be used when UMM_VARIABLE_BLOCK_SIZE is defined
+// If it is, it is a bug. Undefine here to make them pop up.
+#undef UMM_BLOCK_BODY_SIZE
+#endif
+
 /*
  * A home for local items exclusive to umm_malloc.c and not to be shared in
  * umm_malloc_cfg.h. And, not for upstream version.

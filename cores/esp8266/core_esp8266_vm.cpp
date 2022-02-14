@@ -391,10 +391,12 @@ void install_vm_exception_handler()
     __vm_cache_line[cache_ways - 1].next = NULL;
   }
 
+  #ifndef UMM_VARIABLE_BLOCK_SIZE
   // Our umm_malloc configuration can only support a maximum of 256K RAM. A
   // change would affect the block size of all heaps, and a larger block size
   // would result in wasted space in the smaller heaps.
   static_assert(MMU_EXTERNAL_HEAP <= 256, "Heap size must not exceed 256K");
+  #endif
 
   // Hook into memory manager
   umm_init_vm( (void *)0x10000000, MMU_EXTERNAL_HEAP * 1024);

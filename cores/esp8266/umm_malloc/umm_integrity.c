@@ -1,6 +1,18 @@
 #if defined(BUILD_UMM_MALLOC_C)
 /* integrity check (UMM_INTEGRITY_CHECK) {{{ */
-#if defined(UMM_INTEGRITY_CHECK)
+#if defined(UMM_INTEGRITY_CHECK) || defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
+
+#if !defined(UMM_INTEGRITY_CHECK)
+// For DEBUG_ESP_PORT or DEBUG_ESP_CORE build, Make callable from Sketch loop() function.
+bool ICACHE_FLASH_ATTR umm_integrity_check(void);
+bool ICACHE_FLASH_ATTR umm_integrity_check_ctx(umm_heap_context_t *_context);
+#undef UMM_HEAP_CORRUPTION_CB
+#define UMM_HEAP_CORRUPTION_CB()
+
+#else
+bool umm_integrity_check(void);
+bool umm_integrity_check_ctx(umm_heap_context_t *_context);
+#endif
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -27,7 +39,12 @@
  * This way, we ensure that the free flag is in sync with the free pointers
  * chain.
  */
+
 bool umm_integrity_check(void) {
+    return umm_integrity_check_ctx(umm_get_current_heap());
+}
+
+bool umm_integrity_check_ctx(umm_heap_context_t *_context) {
     UMM_CRITICAL_DECL(id_integrity);
     bool ok = true;
     uint16_t prev;
@@ -38,8 +55,6 @@ bool umm_integrity_check(void) {
     /* Iterate through all free blocks */
     prev = 0;
     UMM_CRITICAL_ENTRY(id_integrity);
-
-    umm_heap_context_t *_context = umm_get_current_heap();
 
     while (1) {
         cur = UMM_NFREE(prev);
@@ -131,7 +146,6 @@ clean:
     }
     return ok;
 }
-
 #endif
 /* }}} */
 #endif  // defined(BUILD_UMM_MALLOC_C)

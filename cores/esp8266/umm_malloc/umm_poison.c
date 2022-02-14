@@ -222,7 +222,7 @@ void umm_poison_free(void *ptr) {
  * blocks.
  */
 
-bool umm_poison_check(void) {
+bool umm_poison_check_ctx(umm_heap_context_t *_context) {
     UMM_CRITICAL_DECL(id_poison);
 
     bool ok = true;
@@ -231,7 +231,7 @@ bool umm_poison_check(void) {
     UMM_CHECK_INITIALIZED();
 
     UMM_CRITICAL_ENTRY(id_poison);
-    umm_heap_context_t *_context = umm_get_current_heap();
+
 
     /* Now iterate through the blocks list */
     cur = UMM_NBLOCK(0) & UMM_BLOCKNO_MASK;
@@ -250,6 +250,10 @@ bool umm_poison_check(void) {
     UMM_CRITICAL_EXIT(id_poison);
 
     return ok;
+}
+
+bool umm_poison_check(void) {
+    return umm_poison_check_ctx(umm_get_current_heap());
 }
 
 /* ------------------------------------------------------------------------ */

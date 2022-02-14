@@ -219,10 +219,9 @@ extern "C" {
 
 #ifdef UMM_INFO
 typedef struct UMM_HEAP_INFO_t {
-    #ifndef UMM_INFO_EXTRA
-    #define UMM_INFO_EXTRA
-    #endif
+    #ifdef UMM_INFO_EXTRA
     UMM_INFO_EXTRA;
+    #endif
     unsigned int totalEntries;
     unsigned int usedEntries;
     unsigned int freeEntries;
@@ -239,14 +238,16 @@ typedef struct UMM_HEAP_INFO_t {
 }
 UMM_HEAP_INFO;
 
-// extend upstream code to handle multiple heaps
-//
-// extern UMM_HEAP_INFO ummHeapInfo;
-// struct UMM_HEAP_CONTEXT;
-// typedef struct UMM_HEAP_CONTEXT umm_heap_context_t;
-struct umm_heap_config;
-typedef struct umm_heap_config umm_heap_context_t;
+extern UMM_HEAP_INFO ummHeapInfo;
 
+//D extend upstream code to handle multiple heaps
+//D
+//D extern UMM_HEAP_INFO ummHeapInfo;
+//D struct UMM_HEAP_CONTEXT;
+//D typedef struct UMM_HEAP_CONTEXT umm_heap_context_t;
+//D struct umm_heap_config;
+
+// In our port we add attributes to use ICACHE for non-critical functions.
 extern ICACHE_FLASH_ATTR void *umm_info(void *ptr, bool force);
 #ifdef UMM_INLINE_METRICS
 extern size_t umm_free_heap_size(void);
@@ -356,7 +357,7 @@ extern void umm_corruption(void);
  * If poison corruption is detected, the message is printed and user-provided
  * callback is called: `UMM_HEAP_CORRUPTION_CB()`
  */
-#if 0 // Handle these from umm_malloc_cfgport.h
+#if 0 // Multiple port specific changes. Handle these from umm_malloc_cfgport.h
 #ifdef UMM_POISON_CHECK
   #define UMM_POISON_SIZE_BEFORE (4)
   #define UMM_POISON_SIZE_AFTER (4)
