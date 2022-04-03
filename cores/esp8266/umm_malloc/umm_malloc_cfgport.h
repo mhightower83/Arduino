@@ -87,5 +87,4 @@ extern char _heap_start[];
 #define UMM_HEAP_STACK_DEPTH 32
 #endif
 
-
 #endif

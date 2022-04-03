@@ -313,5 +313,5 @@ void configTime(const char* tz, String server1,
 #ifdef DEBUG_ESP_OOM
 // reinclude *alloc redefinition because of <cstdlib> undefining them
 // this is mandatory for allowing OOM *alloc definitions in .ino files
-#include "umm_malloc/umm_malloc_cfg.h"
+#include "heap_api_debug.h"
 #endif
