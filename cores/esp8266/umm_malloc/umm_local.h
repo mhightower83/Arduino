@@ -26,12 +26,12 @@
  * Saturated unsigned add and unsigned multiply
  */
 size_t umm_umul_sat(const size_t a, const size_t b);  // share with heap.cpp
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
 static size_t umm_uadd_sat(const size_t a, const size_t b);
 #endif
 
 
-#if defined(DEBUG_ESP_OOM) || defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_INTEGRITY_CHECK) || (UMM_POINTER_CHECK >= 2)
+#if defined(DEBUG_ESP_OOM) || defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK) || defined(UMM_INTEGRITY_CHECK) || (UMM_POINTER_CHECK >= 2)
 #define UMM_POINTER_1_LOG_CALLER() (void)0
 
 #else
@@ -47,7 +47,7 @@ static size_t umm_uadd_sat(const size_t a, const size_t b);
 #endif
 
 
-#if defined(UMM_POISON_CHECK_LITE)
+#if defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
 static bool check_poison_neighbors(const umm_heap_context_t * const _context, const uint16_t cur);
 #endif
 
@@ -69,6 +69,8 @@ void ICACHE_FLASH_ATTR umm_print_stats(void);
 int ICACHE_FLASH_ATTR umm_info_safe_printf_P(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 #define UMM_INFO_PRINTF(fmt, ...) umm_info_safe_printf_P(PSTR(fmt),##__VA_ARGS__)
 
+int ICACHE_FLASH_ATTR umm_sprintf_P(char* destStr, const size_t dest_sz, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
+#define UMM_SPRINTF(buf, sz, fmt, ...) umm_sprintf_P(buf, sz, PSTR(fmt),##__VA_ARGS__)
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -111,10 +113,10 @@ extern struct UMM_PTR_CHECK_RESULTS umm_ptr_check_results;
 
 #if defined(UMM_ENABLE_CHECK_WRAPPERS)
 void umm_check_wrapper(
-    const void* const caller,
     const void* const sketch_ptr,
     const char* const file,
     const int line,
+    const void* const caller,
     bool (*fn_check)(const umm_heap_context_t* const, struct UMM_PTR_CHECK_RESULTS *, const void* const));
 #endif
 

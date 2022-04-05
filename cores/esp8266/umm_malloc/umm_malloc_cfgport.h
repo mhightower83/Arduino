@@ -632,12 +632,12 @@ extern bool umm_integrity_check(void);
 /*
  * Compatibility for deprecated UMM_POISON
  */
-#if defined(UMM_POISON) && !defined(UMM_POISON_CHECK)
+#if defined(UMM_POISON) && !defined(UMM_POISON_CHECK) && !defined(UMM_TAG_POISON_CHECK)
 #define UMM_POISON_CHECK_LITE
 #endif
 
 #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_CORE)
-#if !defined(UMM_POISON_CHECK) && !defined(UMM_POISON_CHECK_LITE)
+#if !defined(UMM_POISON_CHECK) && !defined(UMM_POISON_CHECK_LITE) && !defined(UMM_TAG_POISON_CHECK)
 /*
 #define UMM_POISON_CHECK
  */
@@ -646,7 +646,7 @@ extern bool umm_integrity_check(void);
 #endif
 
 
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
   #define UMM_POISON_SIZE_BEFORE (4)
   #define UMM_POISON_SIZE_AFTER (4)
   #define UMM_POISONED_BLOCK_LEN_TYPE uint32_t
@@ -659,9 +659,11 @@ extern bool  umm_poison_check(void);
 extern bool  umm_poison_check_ctx(umm_heap_context_t *_context);
 
 // Local Additions to better report location in code of the caller.
-void *umm_poison_realloc_cfl(void *ptr, size_t size, const void* const caller, const char *file, int line);
-void umm_poison_free_cfl(void *ptr, const void* const caller, const char *file, int line);
-   #if defined(UMM_POISON_CHECK_LITE)
+extern void *umm_poison_malloc_flc(size_t size, const char *file, int line, const void* const caller);
+extern void *umm_poison_calloc_flc(size_t num, size_t size, const char *file, int line, const void* const caller);
+void *umm_poison_realloc_flc(void *ptr, size_t size, const char *file, int line, const void* const caller);
+void umm_poison_free_flc(void *ptr, const char *file, int line, const void* const caller);
+   #if defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
 /*
     * We can safely do individual poison checks at free and realloc and stay
     * under 10us or close.
@@ -683,7 +685,7 @@ void umm_poison_free_cfl(void *ptr, const void* const caller, const char *file, 
 #endif
 
 
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
 /*
  * Overhead adjustments needed for free_blocks to express the number of bytes
  * that can actually be allocated.
@@ -708,7 +710,7 @@ void umm_poison_free_cfl(void *ptr, const void* const caller, const char *file, 
 
 #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_OOM) || \
     defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || \
-    defined(UMM_INTEGRITY_CHECK)
+    defined(UMM_INTEGRITY_CHECK) || defined(UMM_TAG_POISON_CHECK)
 #define DBGLOG_FUNCTION(fmt, ...) ets_uart_printf(fmt,##__VA_ARGS__)
 #else
 #define DBGLOG_FUNCTION(fmt, ...)   do { (void)fmt; } while (false)
@@ -719,7 +721,7 @@ void umm_poison_free_cfl(void *ptr, const void* const caller, const char *file, 
 //C TODO Need to follow this DBGLOG level stuff again to see if it is right
 // I keep getting confused on these levels and how they work.
 
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_INTEGRITY_CHECK)
+#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK) || defined(UMM_INTEGRITY_CHECK)
 #if !defined(DBGLOG_LEVEL) || DBGLOG_LEVEL < 4
 // To ensure we get the debug log prints for these cases, DBGLOG_LEVEL must be
 // 4 or greater.
@@ -743,7 +745,7 @@ void umm_poison_free_cfl(void *ptr, const void* const caller, const char *file, 
 #endif
 
 #else
-#if defined(DEBUG_ESP_OOM) || defined(UMM_POISON_CHECK_LITE)
+#if defined(DEBUG_ESP_OOM) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
 // If we are going DEBUG_ESP_OOM or UMM_POISON_CHECK_LITE it is worth doing UMM_POINTER_CHECK
 #define UMM_POINTER_CHECK 2
 #else
@@ -752,18 +754,18 @@ void umm_poison_free_cfl(void *ptr, const void* const caller, const char *file, 
 #endif
 
 
-#if (UMM_POINTER_CHECK == 1) && (defined(DEBUG_ESP_OOM) || defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_INTEGRITY_CHECK))
+#if (UMM_POINTER_CHECK == 1) && (defined(DEBUG_ESP_OOM) || defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK) || defined(UMM_INTEGRITY_CHECK))
 // Must raise level to capture the correct caller address because of the debug wrappers in heap.cpp
 #undef UMM_POINTER_CHECK
 #define UMM_POINTER_CHECK 2
 #endif
 
-#if (UMM_POINTER_CHECK >= 2) || defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_INTEGRITY_CHECK)
+#if (UMM_POINTER_CHECK >= 2) || defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK) || defined(UMM_INTEGRITY_CHECK)
 #define UMM_ENABLE_CHECK_WRAPPERS 1
 #endif
 
 #if (UMM_POINTER_CHECK >= 2)
-extern void umm_pointer_check_wrap(const void* const ptr, const void* const caller, const char* const file, const int line);
+extern void umm_pointer_check_wrap(const void* const ptr, const char* const file, const int line, const void* const caller);
 #endif
 
 
@@ -786,7 +788,7 @@ struct UMM_TIME_STATS_t {
     #ifdef UMM_INFO
     UMM_TIME_STAT id_info;
     #endif
-    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
     UMM_TIME_STAT id_poison;
     #endif
     #ifdef UMM_INTEGRITY_CHECK
@@ -828,7 +830,7 @@ void  free_loc(void *p, const char *file, int line);
 
 
 
-#ifdef DEBUG_ESP_OOM
+#if defined(DEBUG_ESP_OOM) || defined(UMM_TAG_POISON_CHECK)
 // this must be outside from "#ifndef _UMM_MALLOC_CFG_H"
 // because Arduino.h's <cstdlib> does #undef *alloc
 // Arduino.h recall us to redefine them
@@ -845,7 +847,7 @@ void IRAM_ATTR heap_vPortFree(void *ptr, const char *file, int line);
 #define calloc(n,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; heap_pvPortCalloc(n, s, mem_debug_file, __LINE__); })
 #define realloc(p,s) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; heap_pvPortRealloc(p, s, mem_debug_file, __LINE__); })
 
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
 #define dbg_heap_free(p) ({ static const char mem_debug_file[] PROGMEM STORE_ATTR = __FILE__; heap_vPortFree(p, mem_debug_file, __LINE__); })
 #else
 #define dbg_heap_free(p) free(p)

@@ -15,7 +15,7 @@ UMM_TIME_STATS time_stats = {
     #ifdef UMM_INFO
     {0xFFFFFFFF, 0U, 0U, 0U},
     #endif
-    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
     {0xFFFFFFFF, 0U, 0U, 0U},
     #endif
     #ifdef UMM_INTEGRITY_CHECK
@@ -41,7 +41,7 @@ bool ICACHE_FLASH_ATTR get_umm_get_perf_data(UMM_TIME_STATS *p, size_t size) {
 
 // Alternate Poison functions
 
-#if defined(UMM_POISON_CHECK_LITE)
+#if defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
 // We skip this when doing the full poison check.
 
 static bool check_poison_neighbors(
@@ -89,7 +89,7 @@ static bool check_poison_neighbors(
 }
 #endif
 
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
 static bool get_unpoisoned_check_neighbors_core(
     const umm_heap_context_t *const _context,
     struct UMM_PTR_CHECK_RESULTS* ptr_chk,
@@ -110,12 +110,12 @@ static bool get_unpoisoned_check_neighbors_core(
     return poison;
 }
 
-static void *get_unpoisoned_check_neighbors(const void * const vptr, const void* const caller,  const char *file, const int line) {
+static void *get_unpoisoned_check_neighbors(const void * const vptr, const char *file, const int line, const void* const caller) {
     uintptr_t ptr = (uintptr_t)vptr;
 
     if (ptr != 0) {
         // No return on fail
-        umm_check_wrapper(vptr, caller, file, line, get_unpoisoned_check_neighbors_core);
+        umm_check_wrapper(vptr, file, line, caller, get_unpoisoned_check_neighbors_core);
 
         ptr -= UMM_POISON_SIZE_BEFORE;
 
@@ -135,32 +135,108 @@ static void *get_unpoisoned_check_neighbors(const void * const vptr, const void*
 
     return (void *)ptr;
 }
+#endif
+
+#if defined(UMM_TAG_POISON_CHECK)
+static void *get_poisoned_c(void *vptr, size_t size_w_poison, const char *file, int line, const void* const caller) {
+    (void)file;
+    (void)line;
+    uint8_t *ptr = (uint8_t *)vptr;
+
+    if (size_w_poison != 0 && ptr != NULL) {
+
+        /* Poison only the end of the allocated chunk */
+// #if defined(UMM_TAG_POISON_CHECK)
+//         // For caller tagged option use before to hold caller tag
+//         put_poison(ptr + sizeof(UMM_POISONED_BLOCK_LEN_TYPE),
+//             UMM_POISON_SIZE_BEFORE);
+// #endif
+        put_poison(ptr + size_w_poison - UMM_POISON_SIZE_AFTER,
+            UMM_POISON_SIZE_AFTER);
+
+        /* Put exact length of the user's chunk of memory */
+        *(UMM_POISONED_BLOCK_LEN_TYPE *)ptr = (UMM_POISONED_BLOCK_LEN_TYPE)size_w_poison;
+
+        ptr += sizeof(UMM_POISONED_BLOCK_LEN_TYPE);
+        *(const void**)ptr = caller;
+
+        /* Return pointer at the first non-poisoned byte */
+        ptr += UMM_POISON_SIZE_BEFORE;
+    }
+
+    return (void *)ptr;
+}
+/* ------------------------------------------------------------------------ */
+
+void *umm_poison_malloc_flc(size_t size, const char *file, int line, const void* const caller) {
+    void *ret;
+
+    add_poison_size(&size);
+
+    ret = umm_malloc(size);
+
+    ret = get_poisoned_c(ret, size, file, line, caller);
+
+    return ret;
+}
 
 /* ------------------------------------------------------------------------ */
 
-void umm_poison_free_cfl(void *ptr, const void* const caller, const char *file, int line) {
+void *umm_poison_calloc_flc(size_t num, size_t item_size, const char *file, int line, const void* const caller) {
+    void *ret;
 
-    ptr = get_unpoisoned_check_neighbors(ptr, caller, file, line);
+    // Use saturated multiply.
+    // Rely on umm_malloc to supply the fail response as needed.
+    size_t size = umm_umul_sat(num, item_size);
+
+    add_poison_size(&size);
+
+    ret = umm_malloc(size);
+
+    if (NULL != ret) {
+        memset(ret, 0x00, size);
+    }
+
+    ret = get_poisoned_c(ret, size, file, line, caller);
+
+    return ret;
+}
+
+#elif defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+
+static inline void *get_poisoned_c(void *vptr, size_t size_w_poison, const char *file, int line, const void* const caller) {
+  (void)caller;
+  (void)file;
+  (void)line;
+  return get_poisoned(vptr, size_w_poison);
+}
+#endif
+
+#if defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
+/* ------------------------------------------------------------------------ */
+
+void umm_poison_free_flc(void *ptr, const char *file, int line, const void* const caller) {
+
+    ptr = get_unpoisoned_check_neighbors(ptr, file, line, caller);
 
     umm_free(ptr);
 }
 
 /* ------------------------------------------------------------------------ */
 
-void *umm_poison_realloc_cfl(void *ptr, size_t size, const void* const caller, const char *file, int line) {
+void *umm_poison_realloc_flc(void *ptr, size_t size, const char *file, int line, const void* const caller) {
     void *ret;
 
-    ptr = get_unpoisoned_check_neighbors(ptr, caller, file, line);
+    ptr = get_unpoisoned_check_neighbors(ptr, file, line, caller);
 
     add_poison_size(&size);
     ret = umm_realloc(ptr, size);
 
-    ret = get_poisoned(ret, size);
+    ret = get_poisoned_c(ret, size, file, line, caller);
 
     return ret;
 }
 #endif
-
 
 /* ------------------------------------------------------------------------ */
 
@@ -281,6 +357,15 @@ int ICACHE_FLASH_ATTR umm_info_safe_printf_P(const char *fmt, ...) {
     return result;
 }
 
+int ICACHE_FLASH_ATTR umm_sprintf_P(char* destStr, const size_t dest_sz, const char *fmt, ...) {
+    va_list argPtr;
+    va_start(argPtr, fmt);
+    int result = vsnprintf(destStr, dest_sz, fmt, argPtr);
+    va_end(argPtr);
+    destStr[dest_sz - 1] = '\0';
+    return result;
+}
+
 #if (UMM_STATS > 0)
 size_t ICACHE_FLASH_ATTR umm_get_oom_count(void) {
     umm_heap_context_t *_context = umm_get_current_heap();
@@ -355,7 +440,7 @@ size_t ICACHE_FLASH_ATTR umm_get_free_null_count(void) {
 }
 #endif // UMM_STATS_FULL
 
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
 /*
  * Saturated unsigned add
  * Poison added to allocation size requires overflow protection.
@@ -602,7 +687,7 @@ static bool umm_pointer_full_check_core(
 static const void* sketch_ptr__add_to_check_results(struct UMM_PTR_CHECK_RESULTS* ptr_chk, const void* const sketch_ptr) {
     uintptr_t umm_data_ptr = ptr_chk->sketch_ptr = (uintptr_t)sketch_ptr;
 
-    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
     // called with poisoned sketch pointer
     umm_data_ptr -= sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE;
     #endif
@@ -621,9 +706,9 @@ static const void* sketch_ptr__add_to_check_results(struct UMM_PTR_CHECK_RESULTS
  */
 void umm_check_wrapper(
     const void* const sketch_ptr,
-    const void* const caller,
     const char* const file,
     const int line,
+    const void* const caller,
     bool (*fn_check)(const umm_heap_context_t* const, struct UMM_PTR_CHECK_RESULTS*, const void* const)) {
 
     umm_heap_context_t *_context;
@@ -635,9 +720,9 @@ void umm_check_wrapper(
     struct UMM_PTR_CHECK_RESULTS* ptr_chk = &umm_ptr_check_results;
 
     // Fill everything in, in case something fails
-    ptr_chk->caller = caller;
     ptr_chk->file = file;
     ptr_chk->line = line;
+    ptr_chk->caller = caller;
 
     if (sketch_ptr) {
         umm_data_ptr = sketch_ptr__add_to_check_results(ptr_chk, sketch_ptr);
@@ -668,17 +753,17 @@ void umm_check_wrapper(
  *   umm_integrity_check_wrap(__builtin_return_address(0), ptr, file, line);
  */
 #if (UMM_POINTER_CHECK == 2)
-void umm_pointer_check_wrap(const void* const ptr, const void* const caller, const char* const file, const int line) {
+void umm_pointer_check_wrap(const void* const ptr, const char* const file, const int line, const void* const caller) {
     if (ptr) {
-        umm_check_wrapper(ptr, caller, file, line, umm_pointer_quick_check_core);
+        umm_check_wrapper(ptr, file, line, caller, umm_pointer_quick_check_core);
     }
 }
 #endif
 
 #if (UMM_POINTER_CHECK == 3)
-void umm_pointer_check_wrap(const void* const ptr, const void* const caller, const char* const file, const int line) {
+void umm_pointer_check_wrap(const void* const ptr, const char* const file, const int line, const void* const caller) {
     if (ptr) {
-        umm_check_wrapper(ptr, caller, file, line, umm_pointer_full_check_core);
+        umm_check_wrapper(ptr, file, line, caller, umm_pointer_full_check_core);
     }
 }
 #endif
@@ -698,8 +783,8 @@ static bool _umm_poison_check_core(
     return true;
 }
 
-void umm_poison_check_wrap(const void* const ptr, const void* const caller, const char* const file, const int line) {
-    return umm_check_wrapper(ptr, caller, file, line, _umm_poison_check_core);
+void umm_poison_check_wrap(const void* const ptr, const char* const file, const int line, const void* const caller) {
+    return umm_check_wrapper(ptr, file, line, caller, _umm_poison_check_core);
 }
 #endif
 
@@ -718,8 +803,8 @@ static bool _umm_integrity_check_core(
     return true;
 }
 
-void umm_integrity_check_wrap(const void* const ptr, const void* const caller, const char* const file, const int line) {
-    return umm_check_wrapper(ptr, caller, file, line, _umm_integrity_check_core);
+void umm_integrity_check_wrap(const void* const ptr, const char* const file, const int line, const void* const caller) {
+    return umm_check_wrapper(ptr, file, line, caller, _umm_integrity_check_core);
 }
 #endif
 
@@ -734,7 +819,7 @@ void umm_integrity_check_wrap(const void* const ptr, const void* const caller, c
  */
 static const void* umm_data_ptr__add_to_check_results(struct UMM_PTR_CHECK_RESULTS* ptr_chk, const void* const umm_data) {
     ptr_chk->sketch_ptr = (uintptr_t)umm_data;
-    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
     // called with umm_data pointer
     ptr_chk->sketch_ptr += sizeof(UMM_POISONED_BLOCK_LEN_TYPE) + UMM_POISON_SIZE_BEFORE;
     #endif
@@ -776,7 +861,7 @@ void exception_decoder_helper(const void* caller, uintptr_t ptr, void (*fn_print
         return;
     }
 
-    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+    #if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
     void* prev_caller = *(void**)(ptr - UMM_POISON_SIZE_BEFORE);
     // 1st caller to free
     fn_printf(PSTR("  epc1=%p, epc2=0x00000000, epc3=0x00000000, excvaddr=%p, depc=0x00000000\r\n"), prev_caller, (void *)ptr);

@@ -1,7 +1,7 @@
 #if defined(BUILD_UMM_MALLOC_C)
 
 /* poisoning (UMM_POISON_CHECK) {{{ */
-#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE)
+#if defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || defined(UMM_TAG_POISON_CHECK)
 #define POISON_BYTE (0xa5)
 
 #include <stdint.h>
@@ -82,12 +82,13 @@ static bool check_poison_block(umm_block *pblock) {
         uint8_t *pc = pblock->body.data;
         uint8_t *pc_cur;
 
+#if !defined(UMM_TAG_POISON_CHECK)
         pc_cur = pc + sizeof(UMM_POISONED_BLOCK_LEN_TYPE);
         if (!check_poison(pc_cur, UMM_POISON_SIZE_BEFORE, "before")) {
             ok = false;
             goto clean;
         }
-
+#endif
         pc_cur = pc + *((UMM_POISONED_BLOCK_LEN_TYPE *)pc) - UMM_POISON_SIZE_AFTER;
         if (!check_poison(pc_cur, UMM_POISON_SIZE_AFTER, "after")) {
             ok = false;
@@ -114,6 +115,7 @@ static void *get_poisoned(void *vptr, size_t size_w_poison) {
         /* Poison beginning and the end of the allocated chunk */
         put_poison(ptr + sizeof(UMM_POISONED_BLOCK_LEN_TYPE),
             UMM_POISON_SIZE_BEFORE);
+
         put_poison(ptr + size_w_poison - UMM_POISON_SIZE_AFTER,
             UMM_POISON_SIZE_AFTER);
 
