@@ -40,6 +40,13 @@ extern "C" {
 #include <core_esp8266_non32xfer.h>
 #include "core_esp8266_vm.h"
 
+#ifdef DEBUG_ESP_GLOBAL_CTORS
+// #include "DataBreakpoint.h"
+#endif
+#if defined(USE_JUMBO_STACK_FOR_GLOBAL_CTORS) || defined(DEBUG_ESP_GLOBAL_CTORS)
+#include "StackThunk.h"
+#endif
+
 #define LOOP_TASK_PRIORITY 1
 #define LOOP_QUEUE_SIZE    1
 
@@ -268,6 +275,8 @@ void __register_frame_info (const void *begin, struct object *ob);
 extern char __eh_frame[];
 }
 
+extern "C" {
+static void do_global_ctors(void) __attribute__((used));
 static void do_global_ctors(void) {
     static struct object ob;
     __register_frame_info( __eh_frame, &ob );
@@ -276,6 +285,7 @@ static void do_global_ctors(void) {
     while (p != &__init_array_start)
         (*--p)();
 }
+} // extern "C"
 
 extern "C" {
 extern void __unhandled_exception(const char *str);
@@ -301,11 +311,144 @@ static void  __unhandled_exception_cpp()
 }
 }
 
+////////////////////////////////////////////////////////////////////////////////
+// Add build options to support larger stacks to run global ctors
+// initialization.
+//
+// Build options for three stack sizes
+//   traditional sys stack about 2600 bytes available (default)
+//   switch to cont stack - 4K stack (-DUSE_CONT_STACK_FOR_GLOBAL_CTORS=1)
+//   switch to a jumbo 6K stack using StackThunk (-DUSE_JUMBO_STACK_FOR_GLOBAL_CTORS=1)
+//
+// Debug build option -DDEBUG_ESP_GLOBAL_CTORS=1
+// Evaluate the amount of stack used by using StackThunk
+
+////////////////////////////////////////////////////////////////////////////////
+// Diagnotic for reporting stack overflow when running do_global_ctors() .
+// Model a sys stack or cont stack for supporting do_global_ctors()
+// Use dbreak to watch for stack overflow for either of those stacks.
+// postmortem will report in the event of overflow
+#ifdef DEBUG_ESP_GLOBAL_CTORS
+
+// MODEL_LIMITED_STACK_DO_GLOBAL_CTORS is used to set how much stack space is
+// allowed to be used before hitting a memory breakpoint.
+#undef MODEL_LIMITED_STACK_DO_GLOBAL_CTORS
+#if defined(USE_CONT_STACK_FOR_GLOBAL_CTORS)
+#define MODEL_LIMITED_STACK 1
+#define MODEL_LIMITED_STACK_DO_GLOBAL_CTORS CONT_STACKSIZE
+#elif defined(USE_JUMBO_STACK_FOR_GLOBAL_CTORS)
+#define MODEL_LIMITED_STACK 1
+#ifdef DATABREAKPOINT_H
+// To have space for processing an exception breakpoint, we have to shrink the
+// available stack space down from 6K.
+#define MODEL_LIMITED_STACK_DO_GLOBAL_CTORS (stack_thunk_get_stack_size() * 4 - 1000u)
+#else
+#define MODEL_LIMITED_STACK_DO_GLOBAL_CTORS (stack_thunk_get_stack_size() * 4)
+#endif
+#else
+#define MODEL_LIMITED_STACK 0
+#define MODEL_LIMITED_STACK_DO_GLOBAL_CTORS 0
+#endif
+
+// With WPS, 0x3fffe000u - 0x3fffeb30u is unavailable for stack space
+#define STACK_START_WPS_ADDR 0x3fffeb30u
+#define STACK_START_ADDR 0x3fffe000u
+
+#if defined(DATABREAKPOINT_H) || (MODEL_LIMITED_STACK == 0)
+static uint32_t get_sp(void) {
+    uint32_t sp;
+    asm volatile ("mov  %[sp], a1\n\t": [sp]"=r"(sp) :: "memory");
+    return sp;
+}
+#endif
+
+/*
+  Debug evaluation of do_global_ctors(). Run from an oversize stack so we can
+  evaluate if it exceedes the available stack space during a normal execution.
+*/
+extern "C" void wrap_do_global_ctors(size_t available_stack) {
+#ifdef DATABREAKPOINT_H
+    // Set dbreak to limit stack space to that available in sys stack.
+    uint32_t dbreakBlockAddr = get_sp() - available_stack + 63;
+    dbreakBlockAddr &= ~63; // must be block address rounded up
+    setDataBreakpoint((void*)dbreakBlockAddr, bytes_64, true, true);
+    do_global_ctors();
+    clear_dbreak();
+#else
+    do_global_ctors();
+#endif
+}
+
+// Creates the global function thunk_wrap_do_global_ctors
+make_stack_thunk(wrap_do_global_ctors);
+extern "C" void thunk_wrap_do_global_ctors(size_t free_stack);
+
+#elif defined(USE_JUMBO_STACK_FOR_GLOBAL_CTORS)
+make_stack_thunk(do_global_ctors);
+extern "C" void thunk_do_global_ctors();
+#endif  // #ifdef DEBUG_ESP_GLOBAL_CTORS
+
+
 void init_done() {
     system_set_os_print(1);
     gdb_init();
     std::set_terminate(__unhandled_exception_cpp);
+#ifdef DEBUG_ESP_GLOBAL_CTORS
+    pinMode(1, SPECIAL);    // Turn serial print back on for debug logging - Serial at 115200 bps
+    ets_uart_printf("\nUsing: thunk_wrap_do_global_ctors\n");
+    // Reducting Heap fragmentation. Reserve all memory except for the amount
+    // needed for the thunk stack. Thus, forcing the thunk stack toward the end
+    // of the Heap. Followed by freeing reserve, the global CTORS allocations
+    // will come from the beginning of the Heap.
+    uint32_t reserve_size = umm_max_block_size() - stack_thunk_get_stack_size() * 4 - (UMM_OVERHEAD_ADJUST + 4) * 2;
+    void *reserve = malloc(reserve_size);
+    ets_uart_printf("Heap reserved for do_global_ctors: %p[%u]\n", reserve, reserve_size);
+    stack_thunk_add_ref();  // The thunk stack is allocated from the end of the Heap
+    free(reserve);          // Now, the long lived allocation can group at the start of the Heap
+#if MODEL_LIMITED_STACK
+    size_t available_stack = MODEL_LIMITED_STACK_DO_GLOBAL_CTORS;
+#else
+    size_t available_stack = get_sp();
+    if ((uint32_t)g_pcont > STACK_START_ADDR) {
+        available_stack -= STACK_START_ADDR;
+    } else {
+        available_stack -= STACK_START_WPS_ADDR;
+    }
+#endif
+    ets_uart_printf("Stack space:\n");
+    ets_uart_printf("  available: %u\n", available_stack);
+    thunk_wrap_do_global_ctors(available_stack);
+    uint32_t used = stack_thunk_get_max_usage();
+    ets_uart_printf("  used:      %u\n", used);
+    if (used > available_stack) {
+        ets_uart_printf("  overflow:  %u\n", used - available_stack);
+    }
+    stack_thunk_del_ref();  // free stack space
+
+// Non stack modeling - build path
+#elif defined(USE_JUMBO_STACK_FOR_GLOBAL_CTORS)
+    // Run from 6K thunk stack
+    uint32_t reserve_size = umm_max_block_size() - stack_thunk_get_stack_size() * 4 - (UMM_OVERHEAD_ADJUST + 4) * 2;
+    void *reserve = malloc(reserve_size);
+    stack_thunk_add_ref();    // The thunk stack is allocated from the end of the Heap
+    free(reserve);            // Now, the long lived allocation will group at the start of the Heap
+    thunk_do_global_ctors();
+    stack_thunk_del_ref();    // free stack space
+
+#elif defined(USE_CONT_STACK_FOR_GLOBAL_CTORS)
+    // Run from cont stack
+    cont_run(g_pcont, &do_global_ctors);
+#ifdef DEBUG_ESP_CORE
+    if (cont_check(g_pcont) != 0) {
+        pinMode(1, SPECIAL);  // Turn serial print back on for debug logging -
+        // pre setup(), Serial at 115200 bps
+        panic();
+    }
+#endif
+#else
+    // Running from sys stack
     do_global_ctors();
+#endif
     esp_schedule();
     ESP.setDramHeap();
 }
