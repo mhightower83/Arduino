@@ -109,6 +109,10 @@ uint32_t stack_thunk_get_cont_sp() {
   return (uint32_t)stack_thunk_save;
 }
 
+uint32_t stack_thunk_get_stack_size() {
+  return (uint32_t)_stackSize;
+}
+
 /* Return the number of bytes ever used since the stack was created */
 uint32_t stack_thunk_get_max_usage()
 {

@@ -39,6 +39,7 @@ extern uint32_t stack_thunk_get_refcnt();
 extern uint32_t stack_thunk_get_stack_top();
 extern uint32_t stack_thunk_get_stack_bot();
 extern uint32_t stack_thunk_get_cont_sp();
+extern uint32_t stack_thunk_get_stack_size();
 extern uint32_t stack_thunk_get_max_usage();
 extern void stack_thunk_dump_stack();
 extern void stack_thunk_fatal_overflow();
