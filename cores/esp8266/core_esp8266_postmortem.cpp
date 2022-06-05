@@ -35,6 +35,7 @@
 #include "coredecls.h"
 #include "esp8266_undocumented.h"
 #include "core_esp8266_features.h"
+#include "DataBreakpoint.h"
 
 extern "C" {
 
@@ -206,15 +207,17 @@ void __wrap_system_restart_local() {
     ets_install_putc1(&uart_write_char_d);
 
 #if defined(DEBUG_ESP_PORT) || defined(DEBUG_ESP_EXCEPTIONS)
+    struct DBREAK_S dbreak = {NULL, 0u};
     if (!gdb_present()) {
         // Clear breakpoint registers so ESP doesn't get a HWDT crash at reboot.
+        dbreak = restoreDataBreakpoint(dbreak);
         uint32_t tmp;  // Let the compiler select the optimum scratch register
         asm volatile(
-            "movi.n           %0,   0\n\t"
-            "wsr.dbreakc0     %0\n\t"
-            "wsr.ibreakenable %0\n\t"
-            "wsr.icount       %0\n\t"
-            :"=r"(tmp) ::
+            "movi.n           %[tmp],   0\n\t"
+            // "wsr.dbreakc0     %[tmp]\n\t"
+            "wsr.ibreakenable %[tmp]\n\t"
+            "wsr.icount       %[tmp]\n\t"
+            :[tmp]"=r"(tmp)::
         );
     }
 #endif
@@ -260,7 +263,13 @@ void __wrap_system_restart_local() {
                     // Don't know what should be done here if anything.
                 }
                 else {
+                    uint32_t debugcause = soc_get_debugcause();
                     ets_printf_P(PSTR("\nDebug Exception"));
+                    if ((debugcause & 0x04u)) { // dbreak
+                        ets_printf_P(PSTR(" dbreaka0(0x%0p) dbreakc0(0x%08X)"), dbreak.a, dbreak.c);
+                    } else {
+                        ets_printf_P(PSTR(" cause 0x%02X"), debugcause);
+                    }
                     // The current Exception Decoder does not process the value in epc2
                     // Set a fake epc1 so the Exception Decoder identifies the correct BP line
                     rst_info.epc1 = rst_info.epc2;

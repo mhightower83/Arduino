@@ -41,7 +41,7 @@ extern "C" {
 #include "core_esp8266_vm.h"
 
 #ifdef DEBUG_ESP_GLOBAL_CTORS
-// #include "DataBreakpoint.h"
+#include "DataBreakpoint.h"
 #endif
 #if defined(USE_JUMBO_STACK_FOR_GLOBAL_CTORS) || defined(DEBUG_ESP_GLOBAL_CTORS)
 #include "StackThunk.h"
@@ -375,6 +375,7 @@ extern "C" void wrap_do_global_ctors(size_t available_stack) {
     do_global_ctors();
     clear_dbreak();
 #else
+    (void)available_stack;
     do_global_ctors();
 #endif
 }
