@@ -1,5 +1,6 @@
 /*
- * Issolated from umm_malloc/umm_malloc_cfg.h and replaced with #include
+ * Issolated heap debug helper code from from umm_malloc/umm_malloc_cfg.h.
+ * Updated umm_malloc/umm_malloc.h and Arduino.h to reference.
  * No #ifdef fenceing was used before. From its previous location, this content
  * was reassert multiple times through Arduino.h. In case there are legacy
  * projects that depend on the previous unfenced behavior, no fencing has been
@@ -8,6 +9,9 @@
 
 /*
  * *alloc redefinition - Included from Arduino.h for DEBUG_ESP_OOM support.
+ * This must be independent of umm_malloc_cfg.h/umm_malloc_cfgport.h
+ * Because Arduino.h's <cstdlib> does #undef *alloc, Arduino.h needs to call us
+ * to redefine them at the end of Arduino.h.
  *
  * It can also be directly include by the sketch for UMM_POISON_CHECK or
  * UMM_POISON_CHECK_LITE builds to get more info about the caller when they
@@ -18,8 +22,11 @@
 #define MEMLEAK_DEBUG
 
 //C Legacy? Is this needed anymore?
+// Delete this define later. May be a reminent left behind from earlier
+// refactoring of heap.cpp. heap.cpp handles requirements for zalloc().
+// With rare exception (if any) umm_... stuff should be internal to umm_malloc
+// library and Heap API shim heap.cpp. Should be safe to delete.
 #define umm_zalloc(s) umm_calloc(1,s)
-
 #endif
 
 #ifdef __cplusplus
@@ -27,10 +34,9 @@ extern "C" {
 #endif
 
 #if defined(DEBUG_ESP_OOM) || defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || (UMM_POINTER_CHECK >= 2)
-// this must be outside from "#ifndef _UMM_MALLOC_CFG_H"
-// because Arduino.h's <cstdlib> does #undef *alloc
-// Arduino.h recall us to redefine them
+#include "umm_malloc/umm_malloc_cfg.h"
 #include <pgmspace.h>
+
 // Reuse pvPort* calls, since they already support passing location information.
 // Specifically the debug version (heap_...) that does not force DRAM heap.
 void *IRAM_ATTR heap_pvPortMalloc(size_t size, const char *file, int line);
@@ -74,7 +80,8 @@ void IRAM_ATTR _heap_vPortFree(void *ptr, const char* file, int line, const void
 
 #else
 #define dbg_heap_free(p) free(p)
-#endif /* DEBUG_ESP_OOM */
+#endif /* #if defined(DEBUG_ESP_OOM) || defined(UMM_POISON_CHECK) || defined(UMM_POISON_CHECK_LITE) || (UMM_POINTER_CHECK >= 2)
+*/
 
 #ifdef __cplusplus
 }

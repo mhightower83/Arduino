@@ -581,8 +581,10 @@ size_t IRAM_ATTR xPortWantedSizeAlign(size_t size)
 
 void system_show_malloc(void)
 {
+#ifdef UMM_INFO
     HeapSelectDram ephemeral;
     umm_info(NULL, true);
+#endif
 }
 
 };
