@@ -93,8 +93,11 @@ extern "C" {
 #define UMM_MALLOC_FL(s,f,l,c)    umm_poison_malloc(s)
 #define UMM_CALLOC_FL(n,s,f,l,c)  umm_poison_calloc(n,s)
 #define UMM_ZALLOC_FL(s,f,l,c)    umm_poison_calloc(1,s)
-#define UMM_REALLOC_FL(p,s,f,l,c) umm_poison_realloc_flc(p,s,f,l,c)
-#define UMM_FREE_FL(p,f,l,c)      umm_poison_free_flc(p,f,l,c)
+//C TODO Enhance umm_poison_realloc_fl and umm_poison_free_fl now for reporting caller
+// #define UMM_REALLOC_FL(p,s,f,l,c) umm_poison_realloc_flc(p,s,f,l,c)
+// #define UMM_FREE_FL(p,f,l,c)      umm_poison_free_flc(p,f,l,c)
+#define UMM_REALLOC_FL(p,s,f,l,c) umm_poison_realloc_fl(p,s,f,l)
+#define UMM_FREE_FL(p,f,l,c)      umm_poison_free_fl(p,f,l)
 #define ENABLE_THICK_DEBUG_WRAPPERS
 
 #undef realloc
@@ -180,7 +183,7 @@ extern "C" {
 // OOM - these variables are always in use by abi.cpp
 //
 // Always track last failed caller and size requested
-void *umm_last_fail_alloc_addr = NULL;
+const void *umm_last_fail_alloc_addr = NULL;
 size_t umm_last_fail_alloc_size = 0u;
 #if defined(DEBUG_ESP_OOM)
 const char *umm_last_fail_alloc_file = NULL;
@@ -204,7 +207,7 @@ int umm_last_fail_alloc_line = 0;
 // file names stored in PROGMEM. The PROGMEM address to the string is printed in
 // its place.
 #define DEBUG_HEAP_PRINTF ets_uart_printf
-void IRAM_ATTR print_loc(size_t size, const char* file, int line, void* caller)
+void IRAM_ATTR print_loc(size_t size, const char* file, int line, const void* caller)
 {
     if (system_get_os_print()) {
         DEBUG_HEAP_PRINTF(":oom(%d)@", (int)size);
@@ -389,7 +392,7 @@ void* IRAM_ATTR _heap_pvPortRealloc(void *ptr, size_t size, const char* file, in
     return ret;
 }
 
-void IRAM_ATTR _heap_vPortFree(void *ptr, const char* file, int line, const void* const caller)
+void IRAM_ATTR _heap_vPortFree(void *ptr, const char* file, int line, [[maybe_unused]] const void* const caller)
 {
     INTEGRITY_CHECK__PANIC_FL(file, line);
     UMM_FREE_FL(ptr, file, line, caller);
