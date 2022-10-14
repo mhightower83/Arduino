@@ -37,6 +37,12 @@ bool ICACHE_FLASH_ATTR get_umm_get_perf_data(UMM_TIME_STATS *p, size_t size) {
 #endif
 
 // Alternate Poison functions
+#ifdef HEAP_USER_BREAK_FLC_CB
+extern "C" void HEAP_USER_BREAK_FLC_CB(const char* file, int line, const void *caller);
+#define _HEAP_USER_BREAK_FLC_CB HEAP_USER_BREAK_FLC_CB
+#else
+#define _HEAP_USER_BREAK_FLC_CB(f, l, c) do { (void)f; (void)l; (void)c; } while(0)
+#endif
 
 #if defined(UMM_POISON_CHECK_LITE)
 // We skip this when doing the full poison check.
@@ -87,7 +93,7 @@ static bool check_poison_neighbors(umm_heap_context_t *_context, uint16_t cur) {
 
 /* ------------------------------------------------------------------------ */
 
-static void *get_unpoisoned_check_neighbors(void *vptr, const char *file, int line) {
+static void *get_unpoisoned_check_neighbors(const void *vptr, const char *file, int line, const void *caller) {
     uintptr_t ptr = (uintptr_t)vptr;
 
     if (ptr != 0) {
@@ -114,6 +120,7 @@ static void *get_unpoisoned_check_neighbors(void *vptr, const char *file, int li
         }
 
         if (!poison) {
+            _HEAP_USER_BREAK_FLC_CB(file, line, caller);
             if (file) {
                 __panic_func(file, line, "");
             } else {
@@ -135,10 +142,10 @@ static void *get_unpoisoned_check_neighbors(void *vptr, const char *file, int li
 
 /* ------------------------------------------------------------------------ */
 
-void *umm_poison_realloc_fl(void *ptr, size_t size, const char *file, int line) {
+void *umm_poison_realloc_flc(void *ptr, size_t size, const char *file, int line, const void *caller) {
     void *ret;
 
-    ptr = get_unpoisoned_check_neighbors(ptr, file, line);
+    ptr = get_unpoisoned_check_neighbors(ptr, file, line, caller);
 
     add_poison_size(&size);
     ret = umm_realloc(ptr, size);
@@ -150,9 +157,9 @@ void *umm_poison_realloc_fl(void *ptr, size_t size, const char *file, int line) 
 
 /* ------------------------------------------------------------------------ */
 
-void umm_poison_free_fl(void *ptr, const char *file, int line) {
+void umm_poison_free_flc(void *ptr, const char *file, int line, const void *caller) {
 
-    ptr = get_unpoisoned_check_neighbors(ptr, file, line);
+    ptr = get_unpoisoned_check_neighbors(ptr, file, line, caller);
 
     umm_free(ptr);
 }
