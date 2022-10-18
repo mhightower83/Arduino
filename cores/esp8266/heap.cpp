@@ -2,13 +2,12 @@
  * Copyright (c) 2016 Ivan Grokhotkov. All rights reserved.
  * This file is distributed under MIT license.
  */
-
 /*
- * When this module was started, it was a simple redirect to umm_malloc heap
- * APIs for pvPortMalloc, ... and _malloc_r, ... familys of heap APIs. Now it is
- * either a thin wrapper for umm (as it was in the past) or it is a thick
- * wrapper acting as a convergence point) to capture heap debug info and/or
- * perform heap diagnostics.
+ *
+ * When this module started, it was a simple convergence point and redirect to
+ * umm_malloc heap APIs for pvPortMalloc, ... and _malloc_r, ... families of
+ * heap APIs. Now it is either a thin wrapper or a thick wrapper acting as a
+ * convergence point to capture heap debug info and diagnostics.
  *
  * Iventory of debug options that run from here
  *
@@ -116,7 +115,6 @@ extern "C" {
 #define UMM_MALLOC_FL(s,f,l,c)    umm_poison_malloc(s)
 #define UMM_CALLOC_FL(n,s,f,l,c)  umm_poison_calloc(n,s)
 #define UMM_ZALLOC_FL(s,f,l,c)    umm_poison_calloc(1,s)
-//C TODO Enhance umm_poison_realloc_fl and umm_poison_free_fl now for reporting caller
 #define UMM_REALLOC_FL(p,s,f,l,c) umm_poison_realloc_flc(p,s,f,l,c)
 #define UMM_FREE_FL(p,f,l,c)      umm_poison_free_flc(p,f,l,c)
 #define ENABLE_THICK_DEBUG_WRAPPERS
@@ -143,6 +141,8 @@ extern "C" {
 #define UMM_ZALLOC(s)             calloc(1,s)
 #define UMM_REALLOC(p,s)          realloc(p,s)
 #define UMM_FREE(p)               free(p)
+// Keep a slightly thicker wrapper for ABI OOM handling
+#define UMM_MALLOC_FL(s,f,l,c)    malloc(s)
 #endif
 
 
@@ -192,14 +192,26 @@ extern "C" {
 
 
 ///////////////////////////////////////////////////////////////////////////////
-// OOM - these variables are always in use by abi.cpp
+// OOM - this structure variable is always in use by abi.cpp
 //
 // Always track last failed caller and size requested
-const void *umm_last_fail_alloc_addr = NULL;
-size_t umm_last_fail_alloc_size = 0u;
+//
+// Update structure from a CRITICAL_SECTION to ensure detail changes are atomic.
+// Otherwise, if interrupted at the wrong time, OOM details would mix between
+// foreground and IRQ paths.
 #if defined(DEBUG_ESP_OOM)
-const char *umm_last_fail_alloc_file = NULL;
-int umm_last_fail_alloc_line = 0;
+struct umm_last_fail_alloc {
+    const void *addr;
+    size_t size;
+    const char *file;
+    int line;
+} _umm_last_fail_alloc = {NULL, 0, NULL, 0};
+
+#else
+struct umm_last_fail_alloc {
+    const void *addr;
+    size_t size;
+} _umm_last_fail_alloc = {NULL, 0};
 #endif
 
 
@@ -243,37 +255,57 @@ static void IRAM_ATTR print_loc(size_t size, const char* file, int line, const v
     _HEAP_USER_BREAK_FLC_CB(file, line, caller);
 }
 
-#define OOM_CHECK__LOG_LAST_FAIL_FL(p, s, f, l, c) \
-    if(0 != (s) && 0 == p)\
-    {\
-      umm_last_fail_alloc_addr = c;\
-      umm_last_fail_alloc_size = s;\
-      umm_last_fail_alloc_file = f;\
-      umm_last_fail_alloc_line = l;\
-      print_loc(s, f, l, c);\
+extern bool IRAM_ATTR oom_check__log_last_fail_fl(void *ptr, size_t size, [[maybe_unused]] const char* file, [[maybe_unused]] int line, const void* const caller) {
+    if (0 != (size) && 0 == ptr) {
+        uint32_t saved_ps = xt_rsil(DEFAULT_CRITICAL_SECTION_INTLEVEL);
+        _umm_last_fail_alloc.addr = caller;
+        _umm_last_fail_alloc.size = size;
+        _umm_last_fail_alloc.file = file;
+        _umm_last_fail_alloc.line = line;
+        print_loc(s, f, l, c);
+        xt_wsr_ps(saved_ps);
+        return false;
     }
-#define OOM_CHECK__LOG_LAST_FAIL(p, s, c) \
-    if(0 != (s) && 0 == p)\
-    {\
-      umm_last_fail_alloc_addr = c;\
-      umm_last_fail_alloc_size = s;\
-      umm_last_fail_alloc_file = NULL;\
-      umm_last_fail_alloc_line = 0;\
-      print_loc(s, NULL, 0, c);\
-    }
+    return true;
+}
+
+#define OOM_CHECK__LOG_LAST_FAIL_FL(p, s, f, l, c) oom_check__log_last_fail_fl(p, s, f, l, c)
+#define OOM_CHECK__LOG_LAST_FAIL(p, s, c) oom_check__log_last_fail_fl(p, s, NULL, 0, c)
 
 #else
-#define OOM_CHECK__LOG_LAST_FAIL_FL(p, s, f, l, c)
-
-// To capture a minimum of OOM details, this macro is always used by the LIBC
-// Heap wrappers
-#define OOM_CHECK__LOG_LAST_FAIL(p, s, c) \
-    if(0 != (s) && 0 == p)\
-    {\
-      umm_last_fail_alloc_addr = c;\
-      umm_last_fail_alloc_size = s;\
+extern bool IRAM_ATTR oom_check__log_last_fail_fl(void *ptr, size_t size, const void* const caller) {
+    if (0 != (size) && 0 == ptr) {
+        uint32_t saved_ps = xt_rsil(DEFAULT_CRITICAL_SECTION_INTLEVEL);
+        _umm_last_fail_alloc.addr = caller;
+        _umm_last_fail_alloc.size = size;
+        xt_wsr_ps(saved_ps);
+        return false;
     }
+    return true;
+}
+// These are targeted at LIBC, always capture minimum OOM details
+#define OOM_CHECK__LOG_LAST_FAIL_FL(p, s, f, l, c) oom_check__log_last_fail_fl(p, s, c)
+#define OOM_CHECK__LOG_LAST_FAIL(p, s, c) oom_check__log_last_fail_fl(p, s, c)
 #endif
+
+
+///////////////////////////////////////////////////////////////////////////////
+// heap allocator for ABI - Always defined
+void* IRAM_ATTR _heap_abi_malloc(size_t size, bool unhandle, const void* const caller)
+{
+    const char *file = NULL;
+    const int line = 0;
+    INTEGRITY_CHECK__PANIC_FL(file, line, caller);
+    POISON_CHECK__PANIC_FL(file, line, caller);
+    // The above checks go away for non-debug builds
+
+    void* ret = UMM_MALLOC_FL(size, file, line, caller);
+    // OOM check is always present
+    if (!OOM_CHECK__LOG_LAST_FAIL(ret, size, caller) && unhandle) {
+        __unhandled_exception(PSTR("OOM"));
+    }
+    return ret;
+}
 
 #ifndef ENABLE_THICK_DEBUG_WRAPPERS
 ///////////////////////////////////////////////////////////////////////////////
@@ -284,6 +316,7 @@ static void IRAM_ATTR print_loc(size_t size, const char* file, int line, const v
 // overrides/thin wrapper functions for libc Heap calls
 // Note these always have at least the lite version of OOM_CHECK__LOG_LAST_FAIL
 // monitoring in place.
+// capture caller return address at exposed API
 //
 void* _malloc_r(struct _reent* unused, size_t size)
 {
@@ -414,7 +447,7 @@ void IRAM_ATTR _heap_vPortFree(void *ptr, const char* file, int line, [[maybe_un
 
 ///////////////////////////////////////////////////////////////////////////////
 // Heap debug wrappers used by "fancy debug macros" to capture caller's context:
-// module name, line no. and return address.
+// module name, line no. and caller return address.
 // The "fancy debug macros" are defined in `heap_api_debug.h`
 void* IRAM_ATTR heap_pvPortMalloc(size_t size, const char* file, int line)
 {
@@ -443,6 +476,7 @@ void IRAM_ATTR heap_vPortFree(void *ptr, const char* file, int line)
 
 ///////////////////////////////////////////////////////////////////////////////
 // Heap debug wrappers used by LIBC
+// capture caller return address at exposed API
 void* _malloc_r(struct _reent* unused, size_t size)
 {
     (void) unused;
@@ -535,6 +569,9 @@ void* IRAM_ATTR _heap_pvPortZalloc(size_t size, const char* file, int line, cons
 STATIC_ALWAYS_INLINE
 void IRAM_ATTR _heap_vPortFree(void *ptr, const char* file, int line, const void *caller)
 {
+    (void)file;
+    (void)line;
+    (void)caller;
     UMM_FREE(ptr);
 }
 #endif
@@ -546,6 +583,8 @@ void IRAM_ATTR _heap_vPortFree(void *ptr, const char* file, int line, const void
   Force pvPortMalloc, ... APIs to serve DRAM only.
 
   _heap_xxx() functions will be inline for non-debug builds.
+
+  capture caller return address at exposed API
 */
 void* IRAM_ATTR pvPortMalloc(size_t size, const char* file, int line)
 {

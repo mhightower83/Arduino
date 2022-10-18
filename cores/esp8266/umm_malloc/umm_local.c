@@ -120,6 +120,7 @@ static void *get_unpoisoned_check_neighbors(const void *vptr, const char *file, 
         }
 
         if (!poison) {
+            DBGLOG_ERROR("called from %p\n", caller);
             _HEAP_USER_BREAK_FLC_CB(file, line, caller);
             if (file) {
                 __panic_func(file, line, "");

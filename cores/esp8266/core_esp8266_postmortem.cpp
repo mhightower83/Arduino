@@ -62,12 +62,14 @@ enum rst_reason_sw
 static int s_user_reset_reason = REASON_DEFAULT_RST;
 
 // From UMM, the last caller of a malloc/realloc/calloc which failed:
-extern void *umm_last_fail_alloc_addr;
-extern int umm_last_fail_alloc_size;
+extern struct umm_last_fail_alloc {
+    const void *addr;
+    size_t size;
 #if defined(DEBUG_ESP_OOM)
-extern const char *umm_last_fail_alloc_file;
-extern int umm_last_fail_alloc_line;
+    const char *file;
+    int line;
 #endif
+} _umm_last_fail_alloc;
 
 static void raise_exception() __attribute__((noreturn));
 
@@ -208,22 +210,22 @@ void __wrap_system_restart_local() {
     ets_printf_P(PSTR("<<<stack<<<\n"));
 
     // Use cap-X formatting to ensure the standard EspExceptionDecoder doesn't match the address
-    if (umm_last_fail_alloc_addr) {
+    if (_umm_last_fail_alloc.addr) {
 #if defined(DEBUG_ESP_OOM)
         ets_printf_P(PSTR("\nlast failed alloc call: %08X(%d)@%S:%d\n"),
-            (uint32_t)umm_last_fail_alloc_addr, umm_last_fail_alloc_size,
-            umm_last_fail_alloc_file, umm_last_fail_alloc_line);
+            (uint32_t)_umm_last_fail_alloc.addr, _umm_last_fail_alloc.size,
+            _umm_last_fail_alloc.file, _umm_last_fail_alloc.line);
 #else
-        ets_printf_P(PSTR("\nlast failed alloc call: %08X(%d)\n"), (uint32_t)umm_last_fail_alloc_addr, umm_last_fail_alloc_size);
+        ets_printf_P(PSTR("\nlast failed alloc call: %08X(%d)\n"), (uint32_t)_umm_last_fail_alloc.addr, _umm_last_fail_alloc.size);
 #endif
     }
 
     cut_here();
 
-    if (s_unhandled_exception && umm_last_fail_alloc_addr) {
+    if (s_unhandled_exception && _umm_last_fail_alloc.addr) {
         // now outside from the "cut-here" zone, print correctly the `new` caller address,
         // idf-monitor.py will be able to decode this one and show exact location in sources
-        ets_printf_P(PSTR("\nlast failed alloc caller: 0x%08x\n"), (uint32_t)umm_last_fail_alloc_addr);
+        ets_printf_P(PSTR("\nlast failed alloc caller: 0x%08x\n"), (uint32_t)_umm_last_fail_alloc.addr);
     }
 
     custom_crash_callback( &rst_info, sp_dump + offset, stack_end );
