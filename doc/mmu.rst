@@ -4,26 +4,27 @@ MMU - Adjust the Ratio of ICACHE to IRAM
 Overview
 --------
 
-The ESP8266 has a total of 64K of instruction memory, IRAM. This 64K of
-IRAM is composed of one dedicated 32K block of IRAM and two 16K blocks
-of IRAM. The last two 16K blocks of IRAM are flexible in the sense that
-it can be used as a transparent cache for external flash memory. These
-blocks can either be used for IRAM or an instruction cache for executing
-code out of flash, ICACHE.
+The ESP8266 has 64KB of instruction memory, IRAM, composed of one
+dedicated 32KB block of IRAM and two 16KB blocks of IRAM. When
+configured with the 32KB ICACHE option (a transparent instruction
+cache), external flash memory becomes available to execute code. When
+configured with a 16KB ICACHE, the other 16KB block is appended to the
+32KB block, increasing the available IRAM for code to 48KB.
 
-The code generated for a sketch is divided up into two groups, ICACHE
-and IRAM. IRAM offers faster execution. It is used for interrupt service
-routines, exception handling, and time-critical code. The ICACHE allows
-for the execution of up to 1MB of code stored in flash. On a cache miss,
-a delay occurs as the instructions are read from flash via the SPI bus.
+Two groups of memory (ICACHE and IRAM) hold the code compiled for a
+sketch. The IRAM group contains code for interrupt service routines,
+exception handling, and time-critical code. The ICACHE supports the
+execution of up to 1MB of code stored in FLASH. On a cache miss, a delay
+occurs as the instructions load from FLASH into the cache. The SPI bus
+FLASH access contributes to this delay.
 
-There is 98KB of DRAM space. This memory can be accessed as byte, short,
-or a 32-bit word. Access must be aligned according to the data type
-size. A 16bit short must be on a multiple of 2-byte address boundary.
-Likewise, a 32-bit word must be on a multiple of 4-byte address
-boundary. In contrast, data access in IRAM or ICACHE must always be a
-full 32-bit word and aligned. We will discuss a non32-bit exception
-handler for this later.
+There is 98KB of DRAM space. This memory can be accessed as a byte,
+short, or a 32-bit word. Access must be aligned according to the data
+type size. A 16-bit short must be on a multiple of 2-byte address
+boundary. Likewise, a 32-bit word must be on a multiple of 4-byte
+address boundary. In contrast, data access in IRAM or ICACHE must always
+be a full 32-bit word and aligned. We will discuss a non-32-bit
+exception handler for this later.
 
 Option Summary
 --------------
@@ -47,20 +48,21 @@ The Arduino IDE Tools menu option, ``MMU`` has the following selections:
 3. ``16KB cache + 48KB IRAM and 2nd Heap (shared)``
 
    -  This option builds on the previous option and creates a 2nd Heap
-      made with IRAM.
-   -  The 2nd Heap size will vary with free IRAM.
-   -  This option is flexible. IRAM usage for code can overflow into the
-      additional 16KB IRAM region, shrinking the 2nd Heap below 16KB. Or
-      IRAM can be under 32KB, allowing the 2nd Heap to be larger than
-      16KB.
+      from unused IRAM.
+   -  The 2nd Heap size :sub:`will` varys with free IRAM.
+
+      -  As the IRAM code size increases the available 2nd Heap size
+         decreases.
+      -  And, likewise when the IRAM code size shrinks, more space is
+         available in the 2nd Heap.
+
    -  Installs a Non-32-Bit Access handler for IRAM. This allows for
-      byte and 16-bit aligned short access.
+      byte and 16-bit aligned short access of IRAM and PROGMEM memory.
    -  This 2nd Heap is supported by the standard ``malloc`` APIs.
    -  Heap selection is handled through a ``HeapSelect`` class. This
       allows a specific heap selection for the duration of a scope.
    -  Use this option, if you are still running out of DRAM space after
-      you have moved as many of your constant strings/data elements that
-      you can to PROGMEM.
+      moving constant strings/data elements to PROGMEM.
 
 4. ``16KB cache + 32KB IRAM + 16KB 2nd Heap (not shared)``
 
@@ -76,28 +78,23 @@ The Arduino IDE Tools menu option, ``MMU`` has the following selections:
 MMU related build defines and possible values. These values change as
 indicated with the menu options above:
 
-+-------------+------------+------------+-------------+-------------+
-| ``#define`` | balanced   | IRAM       | shared      | not shared  |
-|             |            |            | (IRAM and   | (IRAM and   |
-|             |            |            | Heap)       | Heap)       |
-+=============+============+============+=============+=============+
-| ``MMU_      | ``0x8000`` | ``0xC000`` | ``0xC000``  | ``0x8000``  |
-| IRAM_SIZE`` |            |            |             |             |
-+-------------+------------+------------+-------------+-------------+
-| ``MMU_IC    | ``0x8000`` | ``0x4000`` | ``0x4000``  | ``0x4000``  |
-| ACHE_SIZE`` |            |            |             |             |
-+-------------+------------+------------+-------------+-------------+
-| ``MMU_      | –          | –          | defined,    | –           |
-| IRAM_HEAP`` |            |            | e           |             |
-|             |            |            | nables\ ``u |             |
-|             |            |            | mm_malloc`` |             |
-+-------------+------------+------------+-------------+-------------+
-| ``MMU       | –          | \*\*       | \*\*        | ``0         |
-| _SEC_HEAP`` |            |            |             | x40108000`` |
-+-------------+------------+------------+-------------+-------------+
-| ``MMU_SEC_  | –          | \*\*       | \*\*        | ``0x4000``  |
-| HEAP_SIZE`` |            |            |             |             |
-+-------------+------------+------------+-------------+-------------+
++-----------------------+------------+------------+----------------+----------------+
+| ``#define``           | balanced   | IRAM       | shared         | not shared     |
+|                       |            |            | (IRAM and      | (IRAM and      |
+|                       |            |            | Heap)          | Heap)          |
++=======================+============+============+================+================+
+| ``MMU_IRAM_SIZE``     | ``0x8000`` | ``0xC000`` | ``0xC000``     | ``0x8000``     |
++-----------------------+------------+------------+----------------+----------------+
+| ``MMU_ICACHE_SIZE``   | ``0x8000`` | ``0x4000`` | ``0x4000``     | ``0x4000``     |
++-----------------------+------------+------------+----------------+----------------+
+| ``MMU_IRAM_HEAP``     | –          | –          | defined,       | –              |
+|                       |            |            | enables        |                |
+|                       |            |            | ``umm_malloc`` |                |
++-----------------------+------------+------------+----------------+----------------+
+| ``MMU_SEC_HEAP``      | –          | \*\*       | \*\*           | ``0x40108000`` |
++-----------------------+------------+------------+----------------+----------------+
+| ``MMU_SEC_HEAP_SIZE`` | –          | \*\*       | \*\*           | ``0x4000``     |
++-----------------------+------------+------------+----------------+----------------+
 
 \*\* This define is to an inline function that calculates the value,
 based on unused code space, requires ``#include <mmu_iram.h>``.
@@ -118,7 +115,11 @@ The Arduino IDE Tools menu option, ``Non-32-Bit Access`` has the following selec
    -  Processing an exception uses 256 bytes of stack space just to get
       started. The actual handler will add a little more.
    -  This option is implicitly enabled and required when you select MMU
-      option ``16KB cache + 48KB IRAM and 2nd Heap (shared)``.
+      option ``16KB cache + 48KB IRAM and 2nd Heap (shared)``. Except
+      for NON-OS SDK v3.0.5, which has builtin support for Non-32-Bit
+      Access. Selecting this option explicitly overrides the SDKs
+      builtin support. However, there is no known reason to do this
+      other than debugging.
 
 IRAM, unlike DRAM, must be accessed as aligned full 32-bit words, no
 byte or short access. The pgm_read macros are an option; however, the
@@ -133,11 +134,6 @@ over-optimization.
 
 To get a sense of how memory access time is effected, see examples
 ``MMU48K`` and ``irammem`` in ``ESP8266``.
-
-NON-OS SDK v3.0.0 and above have builtin support for Non-32-Bit Access.
-Selecting ``Byte/Word access to IRAM/PROGMEM`` will override the builtin
-version with ours. However, there is no known reason to do this other
-than debugging.
 
 Miscellaneous
 -------------
